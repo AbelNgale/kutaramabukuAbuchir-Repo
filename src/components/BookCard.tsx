@@ -100,7 +100,7 @@ export const BookCard = ({
           
           {description && (
             <p className="text-sm leading-relaxed">
-              {truncateText(description, 150)}
+              {truncateText(stripHtml(description), 150)}
             </p>
           )}
 
