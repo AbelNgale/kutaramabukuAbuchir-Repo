@@ -558,12 +558,10 @@ const CreateEbook = () => {
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {EBOOK_TEMPLATES.map(template => {
-            const templateIcon = template.id === "classic" ? Type : template.id === "visual" ? Image : template.id === "minimal" ? Minus : BookOpen;
-            const TemplateIcon = templateIcon;
             return <Card key={template.id} className={`p-6 cursor-pointer hover:shadow-card transition-all border-2 ${selectedTemplate === template.id ? "border-primary" : ""}`} onClick={() => setSelectedTemplate(template.id)}>
-                    {true && <div className="aspect-[3/4] bg-gradient-to-br from-muted to-muted/50 rounded-lg mb-4 flex items-center justify-center border-2 border-border relative overflow-hidden">
+                    <div className="aspect-[3/4] bg-gradient-to-br from-muted to-muted/50 rounded-lg mb-4 flex items-center justify-center border-2 border-border relative overflow-hidden">
                         {template.id === "classic" && <div className="absolute inset-0 p-4 flex flex-col gap-2">
                             <div className="h-3 bg-foreground/80 w-3/4 rounded mx-auto"></div>
                             <div className="h-1 bg-foreground/20 w-full rounded"></div>
@@ -596,7 +594,35 @@ const CreateEbook = () => {
                             </div>
                             <div className="w-1/3 bg-primary/20 rounded"></div>
                           </div>}
-                      </div>}
+                        {template.id === "modern" && <div className="absolute inset-0 p-4 flex flex-col gap-2">
+                            <div className="h-2 bg-gradient-to-r from-primary to-primary/50 w-2/3 rounded"></div>
+                            <div className="h-1 bg-foreground/20 w-full rounded"></div>
+                            <div className="h-1 bg-foreground/20 w-5/6 rounded"></div>
+                            <div className="flex-1 flex items-center justify-center">
+                              <div className="w-20 h-20 bg-gradient-to-br from-primary/30 to-primary/10 rounded-lg"></div>
+                            </div>
+                            <div className="h-1 bg-foreground/20 w-full rounded"></div>
+                          </div>}
+                        {template.id === "bold" && <div className="absolute inset-0 flex flex-col">
+                            <div className="h-1/4 bg-gradient-to-r from-primary to-secondary"></div>
+                            <div className="flex-1 p-4 space-y-2">
+                              <div className="h-4 bg-foreground/80 w-1/2 rounded"></div>
+                              <div className="h-1 bg-foreground/30 w-full rounded"></div>
+                              <div className="h-1 bg-foreground/30 w-4/5 rounded"></div>
+                              <div className="mt-2 w-full h-12 bg-primary/40 rounded"></div>
+                            </div>
+                          </div>}
+                        {template.id === "elegant" && <div className="absolute inset-0 p-3 flex flex-col gap-2 border-4 border-double border-foreground/20 m-2 rounded">
+                            <div className="h-3 bg-foreground/60 w-1/2 rounded mx-auto"></div>
+                            <div className="h-[1px] bg-foreground/30 w-3/4 mx-auto"></div>
+                            <div className="flex-1 space-y-1 pt-2">
+                              <div className="h-1 bg-foreground/20 w-full rounded"></div>
+                              <div className="h-1 bg-foreground/20 w-full rounded"></div>
+                              <div className="h-1 bg-foreground/20 w-4/5 rounded"></div>
+                            </div>
+                            <div className="w-12 h-12 bg-primary/20 rounded mx-auto"></div>
+                          </div>}
+                      </div>
                     <h3 className="font-semibold mb-2">{template.name}</h3>
                     <p className="text-sm text-muted-foreground">
                       {template.description}

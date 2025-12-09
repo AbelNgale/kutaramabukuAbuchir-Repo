@@ -27,4 +27,22 @@ export const EBOOK_TEMPLATES = [
     description: 'Design moderno com texto e imagens em colunas',
     component: 'MinimalTemplate',
   },
+  {
+    id: 'modern',
+    name: 'Moderno',
+    description: 'Visual contemporâneo com gradientes e estilo sofisticado',
+    component: 'ModernTemplate',
+  },
+  {
+    id: 'bold',
+    name: 'Impactante',
+    description: 'Cores vibrantes e tipografia forte para destaque',
+    component: 'BoldTemplate',
+  },
+  {
+    id: 'elegant',
+    name: 'Elegante',
+    description: 'Design refinado com bordas decorativas e fontes serifadas',
+    component: 'ElegantTemplate',
+  },
 ] as const;
