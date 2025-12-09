@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback, lazy, Suspense, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -8,11 +8,8 @@ import { useToast } from "@/hooks/use-toast";
 import SimplifiedCKEditor from "@/components/SimplifiedCKEditor";
 import CoverPreview from "@/components/CoverPreview";
 import { coverTemplates, CoverTemplate } from "@/components/templates/covers";
-import { saveAs } from 'file-saver';
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, ImageRun, PageBreak } from 'docx';
 import { ArrowLeft, Save, Download, FileText, ImageIcon } from "lucide-react";
-import jsPDF from "jspdf";
-import html2canvas from "html2canvas";
+import { exportToPDF, exportToDOCX } from "@/services/exportService";
 
 const PagedPreview = lazy(() => import("@/components/PagedPreview"));
 
@@ -140,54 +137,13 @@ export default function Editor() {
   const handleDownloadPDF = async () => {
     if (!ebook) return;
     try {
-      const htmlToText = (html: string) => {
-        const temp = document.createElement('div');
-        temp.innerHTML = html;
-        return temp.textContent || temp.innerText || '';
-      };
-
-      const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const margin = 72;
-      const contentWidth = pageWidth - (margin * 2);
-
-      const coverEl = document.querySelector('.cover-preview-container') as HTMLElement;
-      if (coverEl) {
-        try {
-          const canvas = await html2canvas(coverEl, { scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#ffffff' });
-          pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, pageWidth, pageHeight);
-        } catch (err) { console.error('Cover capture error:', err); }
-      }
-
-      pdf.addPage();
-      let yPos = margin + 100;
-      pdf.setFontSize(28);
-      pdf.setFont('helvetica', 'bold');
-      const titleLines = pdf.splitTextToSize(htmlToText(ebook.title), contentWidth);
-      pdf.text(titleLines, pageWidth / 2, yPos, { align: 'center' });
-      yPos += titleLines.length * 35 + 40;
-      
-      if (ebook.author) {
-        pdf.setFontSize(16);
-        pdf.setFont('helvetica', 'normal');
-        pdf.text(`por ${ebook.author}`, pageWidth / 2, yPos, { align: 'center' });
-      }
-
-      pdf.addPage();
-      yPos = margin;
-      pdf.setFontSize(12);
-      const plainText = htmlToText(content);
-      plainText.split('\n').filter(p => p.trim()).forEach(para => {
-        pdf.splitTextToSize(para, contentWidth).forEach((line: string) => {
-          if (yPos > pageHeight - margin) { pdf.addPage(); yPos = margin; }
-          pdf.text(line, margin, yPos);
-          yPos += 18;
-        });
-        yPos += 12;
+      const coverEl = document.querySelector('.cover-preview-container') as HTMLElement | null;
+      await exportToPDF({
+        title: ebook.title,
+        author: ebook.author,
+        content,
+        coverElement: coverEl
       });
-
-      pdf.save(`${htmlToText(ebook.title)}.pdf`);
       toast({ title: "PDF gerado!", description: "O download foi iniciado." });
     } catch (error: unknown) {
       toast({ title: "Erro ao gerar PDF", description: getErrorMessage(error), variant: "destructive" });
@@ -197,30 +153,17 @@ export default function Editor() {
   const handleDownloadDOCX = async () => {
     if (!ebook) return;
     try {
-      const htmlToText = (html: string): string => {
-        const temp = document.createElement('div');
-        temp.innerHTML = html;
-        return temp.textContent || temp.innerText || '';
-      };
-
-      const children: Paragraph[] = [
-        new Paragraph({ text: htmlToText(ebook.title), heading: HeadingLevel.TITLE, alignment: AlignmentType.CENTER, spacing: { before: 400, after: 200 } })
-      ];
-      if (ebook.author) children.push(new Paragraph({ children: [new TextRun({ text: `por ${ebook.author}`, italics: true, size: 28 })], alignment: AlignmentType.CENTER, spacing: { after: 400 } }));
-      children.push(new Paragraph({ children: [new PageBreak()] }));
-
-      htmlToText(content).split('\n').filter(p => p.trim()).forEach(para => {
-        children.push(new Paragraph({ text: para, spacing: { after: 240 } }));
+      await exportToDOCX({
+        title: ebook.title,
+        author: ebook.author,
+        content
       });
-
-      const doc = new Document({ sections: [{ properties: { page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } } }, children }] });
-      const blob = await Packer.toBlob(doc);
-      saveAs(blob, `${htmlToText(ebook.title)}.docx`);
       toast({ title: "DOCX gerado!", description: "O download foi iniciado." });
     } catch (error: unknown) {
       toast({ title: "Erro ao gerar DOCX", description: getErrorMessage(error), variant: "destructive" });
     }
   };
+
 
   if (loading) {
     return (
