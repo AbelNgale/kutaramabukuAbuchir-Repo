@@ -14,7 +14,8 @@ import {
   Indent,
   IndentBlock,
   RemoveFormat,
-  Base64UploadAdapter
+  Base64UploadAdapter,
+  PasteFromOffice
 } from 'ckeditor5';
 import 'ckeditor5/ckeditor5.css';
 import { useRef } from 'react';
@@ -31,7 +32,7 @@ export default function SimplifiedCKEditor({ value, onChange }: SimplifiedCKEdit
   const editorConfiguration = {
     licenseKey: 'GPL',
     plugins: [
-      Essentials, Bold, Italic, Underline, Paragraph, Heading, Font, Alignment, List, Undo, Indent, IndentBlock, RemoveFormat, Base64UploadAdapter
+      Essentials, Bold, Italic, Underline, Paragraph, Heading, Font, Alignment, List, Undo, Indent, IndentBlock, RemoveFormat, Base64UploadAdapter, PasteFromOffice
     ],
     toolbar: {
       items: ['undo', 'redo', '|', 'heading', '|', 'fontSize', 'fontFamily', '|', 'bold', 'italic', 'underline', '|', 'alignment', '|', 'bulletedList', 'numberedList', '|', 'outdent', 'indent', '|', 'removeFormat'],
