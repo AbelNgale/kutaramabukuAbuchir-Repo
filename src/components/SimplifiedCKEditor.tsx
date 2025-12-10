@@ -15,7 +15,9 @@ import {
   IndentBlock,
   RemoveFormat,
   Base64UploadAdapter,
-  PasteFromOffice
+  PasteFromOffice,
+  BlockQuote,
+  GeneralHtmlSupport
 } from 'ckeditor5';
 import 'ckeditor5/ckeditor5.css';
 import { useRef } from 'react';
@@ -32,10 +34,10 @@ export default function SimplifiedCKEditor({ value, onChange }: SimplifiedCKEdit
   const editorConfiguration = {
     licenseKey: 'GPL',
     plugins: [
-      Essentials, Bold, Italic, Underline, Paragraph, Heading, Font, Alignment, List, Undo, Indent, IndentBlock, RemoveFormat, Base64UploadAdapter, PasteFromOffice
+      Essentials, Bold, Italic, Underline, Paragraph, Heading, Font, Alignment, List, Undo, Indent, IndentBlock, RemoveFormat, Base64UploadAdapter, PasteFromOffice, BlockQuote, GeneralHtmlSupport
     ],
     toolbar: {
-      items: ['undo', 'redo', '|', 'heading', '|', 'fontSize', 'fontFamily', '|', 'bold', 'italic', 'underline', '|', 'alignment', '|', 'bulletedList', 'numberedList', '|', 'outdent', 'indent', '|', 'removeFormat'],
+      items: ['undo', 'redo', '|', 'heading', '|', 'fontSize', 'fontFamily', '|', 'bold', 'italic', 'underline', '|', 'alignment', '|', 'bulletedList', 'numberedList', '|', 'outdent', 'indent', '|', 'blockQuote', '|', 'removeFormat'],
       shouldNotGroupWhenFull: true
     },
     heading: {
@@ -49,7 +51,21 @@ export default function SimplifiedCKEditor({ value, onChange }: SimplifiedCKEdit
     fontSize: { options: [10, 11, 12, 14, 16, 18, 20, 24], supportAllValues: true },
     fontFamily: { options: ['default', 'Arial, Helvetica, sans-serif', 'Times New Roman, Times, serif', 'Georgia, serif', 'Verdana, Geneva, sans-serif'], supportAllValues: true },
     placeholder: 'Digite o conteúdo aqui...',
-    initialData: value
+    initialData: value,
+    // Configuração para preservar formatação ao colar
+    htmlSupport: {
+      allow: [
+        { 
+          name: /.*/, 
+          attributes: /^(style|class|id|href|src|alt|target|rel)$/,
+          classes: /.*/,
+          styles: /.*/ 
+        }
+      ],
+      disallow: [
+        { name: /^(script|iframe|object|embed|form|input|button)$/ }
+      ]
+    }
   };
 
   return (

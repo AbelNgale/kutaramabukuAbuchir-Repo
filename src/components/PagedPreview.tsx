@@ -97,43 +97,87 @@ export default function PagedPreview({ title, author, description, content, cove
         .content-section {
           font-family: 'Calibri', 'Segoe UI', sans-serif;
           font-size: 12pt;
-          line-height: 1.15;
+          line-height: 1.6;
         }
         
         .content-section h1 {
           font-size: 24pt;
           font-weight: bold;
-          margin: 0 0 12pt 0;
+          margin: 16pt 0 12pt 0;
           page-break-after: avoid;
         }
         
         .content-section h2 {
           font-size: 18pt;
           font-weight: bold;
-          margin: 0 0 10pt 0;
+          margin: 14pt 0 10pt 0;
           page-break-after: avoid;
         }
         
         .content-section h3 {
           font-size: 14pt;
           font-weight: bold;
-          margin: 0 0 8pt 0;
+          margin: 12pt 0 8pt 0;
           page-break-after: avoid;
         }
         
         .content-section p {
-          margin: 0 0 6pt 0;
+          margin: 0 0 10pt 0;
           orphans: 3;
           widows: 3;
+          text-align: inherit;
         }
         
-        .content-section ul, .content-section ol {
-          margin: 0 0 6pt 24pt;
-          padding: 0;
+        .content-section ul {
+          margin: 8pt 0 12pt 0;
+          padding-left: 24pt;
+          list-style-type: disc;
+        }
+        
+        .content-section ol {
+          margin: 8pt 0 12pt 0;
+          padding-left: 24pt;
+          list-style-type: decimal;
         }
         
         .content-section li {
-          margin-bottom: 3pt;
+          margin-bottom: 6pt;
+          padding-left: 4pt;
+        }
+        
+        .content-section li::marker {
+          color: inherit;
+        }
+        
+        .content-section strong, .content-section b {
+          font-weight: bold;
+        }
+        
+        .content-section em, .content-section i {
+          font-style: italic;
+        }
+        
+        .content-section u {
+          text-decoration: underline;
+        }
+        
+        .content-section blockquote {
+          margin: 10pt 0 10pt 20pt;
+          padding-left: 12pt;
+          border-left: 3pt solid #ccc;
+          font-style: italic;
+        }
+        
+        .content-section [style*="text-align: center"] {
+          text-align: center !important;
+        }
+        
+        .content-section [style*="text-align: right"] {
+          text-align: right !important;
+        }
+        
+        .content-section [style*="text-align: justify"] {
+          text-align: justify !important;
         }
       `;
 
