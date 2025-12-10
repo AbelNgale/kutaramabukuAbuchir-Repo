@@ -1,4 +1,4 @@
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, PageBreak, IRunOptions, IParagraphOptions } from 'docx';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, PageBreak, IRunOptions, ImageRun } from 'docx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { saveAs } from 'file-saver';
@@ -8,6 +8,7 @@ interface ExportOptions {
   author?: string | null;
   content: string;
   coverElement?: HTMLElement | null;
+  hasCoverPage?: boolean; // If true, skip title page as cover already has title/author
 }
 
 // Parse HTML content into structured elements
@@ -163,29 +164,69 @@ function getDocxAlignment(align?: string): typeof AlignmentType[keyof typeof Ali
 }
 
 export async function exportToDOCX(options: ExportOptions): Promise<void> {
-  const { title, author, content } = options;
+  const { title, author, content, coverElement, hasCoverPage = true } = options;
   
   const parsedContent = parseHtmlContent(content);
   
   const children: Paragraph[] = [];
   
-  // Title page
-  children.push(new Paragraph({
-    text: title,
-    heading: HeadingLevel.TITLE,
-    alignment: AlignmentType.CENTER,
-    spacing: { before: 600, after: 200 }
-  }));
-  
-  if (author) {
-    children.push(new Paragraph({
-      children: [new TextRun({ text: `por ${author}`, italics: true, size: 28 })],
-      alignment: AlignmentType.CENTER,
-      spacing: { after: 600 }
-    }));
+  // Add cover as image if available
+  if (coverElement) {
+    try {
+      const canvas = await html2canvas(coverElement, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff'
+      });
+      
+      // Convert canvas to blob
+      const blob = await new Promise<Blob>((resolve) => {
+        canvas.toBlob((b) => resolve(b!), 'image/png', 1.0);
+      });
+      
+      const arrayBuffer = await blob.arrayBuffer();
+      
+      // Add cover image that fills the page (8.5in x 11in at 96 DPI = 816 x 1056 pixels)
+      children.push(new Paragraph({
+        children: [
+          new ImageRun({
+            data: arrayBuffer,
+            transformation: {
+              width: 612, // 8.5in in points (72 DPI)
+              height: 792, // 11in in points (72 DPI)
+            },
+            type: 'png',
+          }),
+        ],
+        alignment: AlignmentType.CENTER,
+      }));
+      
+      children.push(new Paragraph({ children: [new PageBreak()] }));
+    } catch (err) {
+      console.error('Cover capture error for DOCX:', err);
+    }
   }
   
-  children.push(new Paragraph({ children: [new PageBreak()] }));
+  // Only add title page if no cover or explicitly requested
+  if (!coverElement && !hasCoverPage) {
+    children.push(new Paragraph({
+      text: title,
+      heading: HeadingLevel.TITLE,
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 600, after: 200 }
+    }));
+    
+    if (author) {
+      children.push(new Paragraph({
+        children: [new TextRun({ text: `por ${author}`, italics: true, size: 28 })],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 600 }
+      }));
+    }
+    
+    children.push(new Paragraph({ children: [new PageBreak()] }));
+  }
   
   // Content
   let listCounter = 0;
@@ -265,7 +306,7 @@ export async function exportToDOCX(options: ExportOptions): Promise<void> {
 }
 
 export async function exportToPDF(options: ExportOptions): Promise<void> {
-  const { title, author, content, coverElement } = options;
+  const { title, author, content, coverElement, hasCoverPage = true } = options;
   
   const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
   const pageWidth = pdf.internal.pageSize.getWidth();
@@ -274,6 +315,8 @@ export async function exportToPDF(options: ExportOptions): Promise<void> {
   const contentWidth = pageWidth - (margin * 2);
   const lineHeight = 18;
   const maxY = pageHeight - margin;
+  
+  let hasCover = false;
   
   // Add cover if available
   if (coverElement) {
@@ -285,28 +328,33 @@ export async function exportToPDF(options: ExportOptions): Promise<void> {
         backgroundColor: '#ffffff'
       });
       pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, pageWidth, pageHeight);
+      hasCover = true;
       pdf.addPage();
     } catch (err) {
       console.error('Cover capture error:', err);
     }
   }
   
-  // Title page
-  let yPos = margin + 150;
-  pdf.setFontSize(28);
-  pdf.setFont('helvetica', 'bold');
-  const titleLines = pdf.splitTextToSize(title, contentWidth);
-  pdf.text(titleLines, pageWidth / 2, yPos, { align: 'center' });
-  yPos += titleLines.length * 35 + 50;
+  // Only add title page if NO cover was added (cover already has title/author)
+  let yPos = margin;
   
-  if (author) {
-    pdf.setFontSize(16);
-    pdf.setFont('helvetica', 'italic');
-    pdf.text(`por ${author}`, pageWidth / 2, yPos, { align: 'center' });
+  if (!hasCover) {
+    yPos = margin + 150;
+    pdf.setFontSize(28);
+    pdf.setFont('helvetica', 'bold');
+    const titleLines = pdf.splitTextToSize(title, contentWidth);
+    pdf.text(titleLines, pageWidth / 2, yPos, { align: 'center' });
+    yPos += titleLines.length * 35 + 50;
+    
+    if (author) {
+      pdf.setFontSize(16);
+      pdf.setFont('helvetica', 'italic');
+      pdf.text(`por ${author}`, pageWidth / 2, yPos, { align: 'center' });
+    }
+    
+    pdf.addPage();
+    yPos = margin;
   }
-  
-  pdf.addPage();
-  yPos = margin;
   
   // Parse and render content
   const parsedContent = parseHtmlContent(content);
