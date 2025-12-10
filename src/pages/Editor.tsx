@@ -142,7 +142,8 @@ export default function Editor() {
         title: ebook.title,
         author: ebook.author,
         content,
-        coverElement: coverEl
+        coverElement: coverEl,
+        hasCoverPage: true // Cover already has title/author, don't duplicate
       });
       toast({ title: "PDF gerado!", description: "O download foi iniciado." });
     } catch (error: unknown) {
@@ -153,10 +154,13 @@ export default function Editor() {
   const handleDownloadDOCX = async () => {
     if (!ebook) return;
     try {
+      const coverEl = document.querySelector('.cover-preview-container') as HTMLElement | null;
       await exportToDOCX({
         title: ebook.title,
         author: ebook.author,
-        content
+        content,
+        coverElement: coverEl,
+        hasCoverPage: true // Cover already has title/author, don't duplicate
       });
       toast({ title: "DOCX gerado!", description: "O download foi iniciado." });
     } catch (error: unknown) {
@@ -243,7 +247,9 @@ export default function Editor() {
           <TabsContent value="preview" className="mt-0 w-full">
             <Suspense fallback={<div className="flex items-center justify-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div></div>}>
               <div className="paged-preview-container">
-                <CoverPreview template={selectedCoverTemplate} title={ebook.title} author={ebook.author} coverImage={coverImagePreview} genre={ebook.genre} />
+                <div className="cover-preview-wrapper" style={{ marginBottom: '2rem' }}>
+                  <CoverPreview template={selectedCoverTemplate} title={ebook.title} author={ebook.author} coverImage={coverImagePreview} genre={ebook.genre} />
+                </div>
                 <PagedPreview title={ebook.title} author={ebook.author} description={ebook.description || ''} content={content} coverImage={null} />
               </div>
             </Suspense>

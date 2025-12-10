@@ -1,4 +1,13 @@
-import { ClassicCover, ModernCover, MinimalCover, BoldCover, CoverTemplate } from './templates/covers';
+import { 
+  ClassicCover, 
+  ModernCover, 
+  MinimalCover, 
+  BoldCover, 
+  EducativoCover,
+  CorporateCover,
+  RomanceCover,
+  CoverTemplate 
+} from './templates/covers';
 
 interface CoverPreviewProps {
   template: CoverTemplate;
@@ -21,6 +30,12 @@ export default function CoverPreview({ template, title, author, coverImage, genr
         return <MinimalCover {...coverProps} />;
       case 'bold':
         return <BoldCover {...coverProps} />;
+      case 'educativo':
+        return <EducativoCover {...coverProps} />;
+      case 'corporate':
+        return <CorporateCover {...coverProps} />;
+      case 'romance':
+        return <RomanceCover {...coverProps} />;
       default:
         return <ClassicCover {...coverProps} />;
     }

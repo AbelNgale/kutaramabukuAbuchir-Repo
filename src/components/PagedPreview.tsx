@@ -22,22 +22,10 @@ export default function PagedPreview({ title, author, description, content, cove
       // Clear previous content
       previewRef.current!.innerHTML = '';
 
-      // Build HTML content with proper structure
+      // Build HTML content - NO title page since cover already has title/author
       const htmlContent = `
         <div class="paged-content">
-          ${coverImage ? `
-            <section class="cover-page">
-              <img src="${coverImage}" alt="Capa" style="max-width: 100%; max-height: 100%; object-fit: contain;" />
-            </section>
-          ` : ''}
-          
-          <section class="title-page">
-            <h1 class="book-title">${sanitizeHtml(title)}</h1>
-            ${author ? `<p class="book-author">por ${sanitizeHtml(author)}</p>` : ''}
-            ${description ? `<p class="book-description">${sanitizeHtml(description)}</p>` : ''}
-          </section>
-          
-          <section class="content-section">
+          <section class="content-section rich-text-content">
             ${sanitizeHtml(content)}
           </section>
         </div>
