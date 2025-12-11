@@ -261,12 +261,13 @@ export async function exportToDOCX(options: ExportOptions): Promise<void> {
       
       const arrayBuffer = await blob.arrayBuffer();
       
-      // Cover section with zero margins
+      // Cover section with zero margins - A4 dimensions in points (595x842)
       sections.push({
         properties: {
           type: SectionType.NEXT_PAGE,
           page: {
-            margin: { top: 0, right: 0, bottom: 0, left: 0 }
+            margin: { top: 0, right: 0, bottom: 0, left: 0 },
+            size: { width: 11906, height: 16838 } // A4 in twips (1/20 of a point)
           }
         },
         children: [
@@ -275,13 +276,14 @@ export async function exportToDOCX(options: ExportOptions): Promise<void> {
               new ImageRun({
                 data: arrayBuffer,
                 transformation: {
-                  width: 612,
-                  height: 792,
+                  width: 595, // A4 width in points
+                  height: 842, // A4 height in points
                 },
                 type: 'png',
               }),
             ],
             alignment: AlignmentType.CENTER,
+            spacing: { before: 0, after: 0 }
           })
         ]
       });
