@@ -1,4 +1,4 @@
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, PageBreak, IRunOptions, ImageRun } from 'docx';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, PageBreak, IRunOptions, ImageRun, SectionType } from 'docx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { saveAs } from 'file-saver';
@@ -8,15 +8,17 @@ interface ExportOptions {
   author?: string | null;
   content: string;
   coverElement?: HTMLElement | null;
-  hasCoverPage?: boolean; // If true, skip title page as cover already has title/author
+  hasCoverPage?: boolean;
 }
 
-// Parse HTML content into structured elements
 interface ParsedElement {
-  type: 'paragraph' | 'heading1' | 'heading2' | 'heading3' | 'list-item' | 'ordered-item';
+  type: 'paragraph' | 'heading1' | 'heading2' | 'heading3' | 'list-item' | 'ordered-item' | 'image';
   runs: ParsedRun[];
   align?: 'left' | 'center' | 'right' | 'justify';
   listLevel?: number;
+  imageSrc?: string;
+  imageWidth?: number;
+  imageHeight?: number;
 }
 
 interface ParsedRun {
@@ -55,6 +57,9 @@ function parseHtmlContent(html: string): ParsedElement[] {
         const el = n as Element;
         const tagName = el.tagName.toLowerCase();
         
+        // Skip images in inline content
+        if (tagName === 'img') return;
+        
         const newStyles = { ...styles };
         if (tagName === 'strong' || tagName === 'b') newStyles.bold = true;
         if (tagName === 'em' || tagName === 'i') newStyles.italic = true;
@@ -70,6 +75,33 @@ function parseHtmlContent(html: string): ParsedElement[] {
   
   function processElement(el: Element, listLevel = 0) {
     const tagName = el.tagName.toLowerCase();
+    
+    // Handle images
+    if (tagName === 'img') {
+      const src = (el as HTMLImageElement).src;
+      const width = (el as HTMLImageElement).width || 400;
+      const height = (el as HTMLImageElement).height || 300;
+      if (src) {
+        elements.push({
+          type: 'image',
+          runs: [],
+          imageSrc: src,
+          imageWidth: width,
+          imageHeight: height,
+          align: 'center'
+        });
+      }
+      return;
+    }
+    
+    // Check for images inside figures
+    if (tagName === 'figure') {
+      const img = el.querySelector('img');
+      if (img) {
+        processElement(img);
+      }
+      return;
+    }
     
     if (tagName === 'h1') {
       elements.push({
@@ -90,6 +122,12 @@ function parseHtmlContent(html: string): ParsedElement[] {
         align: getAlignment(el)
       });
     } else if (tagName === 'p' || tagName === 'div') {
+      // Check for images inside paragraphs
+      const img = el.querySelector('img');
+      if (img) {
+        processElement(img);
+      }
+      
       const runs = parseInlineContent(el);
       if (runs.length > 0 && runs.some(r => r.text.trim())) {
         elements.push({
@@ -120,7 +158,6 @@ function parseHtmlContent(html: string): ParsedElement[] {
         runs: [{ text: '' }]
       });
     } else {
-      // Process children for other elements
       el.childNodes.forEach(child => {
         if (child.nodeType === Node.ELEMENT_NODE) {
           processElement(child as Element, listLevel);
@@ -163,14 +200,52 @@ function getDocxAlignment(align?: string): typeof AlignmentType[keyof typeof Ali
   }
 }
 
+async function fetchImageAsArrayBuffer(src: string): Promise<ArrayBuffer | null> {
+  try {
+    // For external images, try to fetch with CORS
+    const response = await fetch(src, { mode: 'cors' });
+    if (response.ok) {
+      return await response.arrayBuffer();
+    }
+  } catch {
+    // If CORS fails, try using a canvas approach
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      
+      return new Promise((resolve) => {
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0);
+          canvas.toBlob((blob) => {
+            if (blob) {
+              blob.arrayBuffer().then(resolve);
+            } else {
+              resolve(null);
+            }
+          }, 'image/png');
+        };
+        img.onerror = () => resolve(null);
+        img.src = src;
+      });
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 export async function exportToDOCX(options: ExportOptions): Promise<void> {
   const { title, author, content, coverElement, hasCoverPage = true } = options;
   
   const parsedContent = parseHtmlContent(content);
   
-  const children: Paragraph[] = [];
+  const sections: any[] = [];
   
-  // Add cover as image if available
+  // Add cover as first section (full page, no margins)
   if (coverElement) {
     try {
       const canvas = await html2canvas(coverElement, {
@@ -180,37 +255,47 @@ export async function exportToDOCX(options: ExportOptions): Promise<void> {
         backgroundColor: '#ffffff'
       });
       
-      // Convert canvas to blob
       const blob = await new Promise<Blob>((resolve) => {
         canvas.toBlob((b) => resolve(b!), 'image/png', 1.0);
       });
       
       const arrayBuffer = await blob.arrayBuffer();
       
-      // Add cover image that fills the page (8.5in x 11in at 96 DPI = 816 x 1056 pixels)
-      children.push(new Paragraph({
+      // Cover section with zero margins
+      sections.push({
+        properties: {
+          type: SectionType.NEXT_PAGE,
+          page: {
+            margin: { top: 0, right: 0, bottom: 0, left: 0 }
+          }
+        },
         children: [
-          new ImageRun({
-            data: arrayBuffer,
-            transformation: {
-              width: 612, // 8.5in in points (72 DPI)
-              height: 792, // 11in in points (72 DPI)
-            },
-            type: 'png',
-          }),
-        ],
-        alignment: AlignmentType.CENTER,
-      }));
-      
-      children.push(new Paragraph({ children: [new PageBreak()] }));
+          new Paragraph({
+            children: [
+              new ImageRun({
+                data: arrayBuffer,
+                transformation: {
+                  width: 612,
+                  height: 792,
+                },
+                type: 'png',
+              }),
+            ],
+            alignment: AlignmentType.CENTER,
+          })
+        ]
+      });
     } catch (err) {
       console.error('Cover capture error for DOCX:', err);
     }
   }
   
-  // Only add title page if no cover or explicitly requested
+  // Content section with normal margins
+  const contentChildren: Paragraph[] = [];
+  
+  // Only add title page if no cover
   if (!coverElement && !hasCoverPage) {
-    children.push(new Paragraph({
+    contentChildren.push(new Paragraph({
       text: title,
       heading: HeadingLevel.TITLE,
       alignment: AlignmentType.CENTER,
@@ -218,20 +303,54 @@ export async function exportToDOCX(options: ExportOptions): Promise<void> {
     }));
     
     if (author) {
-      children.push(new Paragraph({
+      contentChildren.push(new Paragraph({
         children: [new TextRun({ text: `por ${author}`, italics: true, size: 28 })],
         alignment: AlignmentType.CENTER,
         spacing: { after: 600 }
       }));
     }
     
-    children.push(new Paragraph({ children: [new PageBreak()] }));
+    contentChildren.push(new Paragraph({ children: [new PageBreak()] }));
   }
   
   // Content
   let listCounter = 0;
   
-  parsedContent.forEach(element => {
+  for (const element of parsedContent) {
+    // Handle images
+    if (element.type === 'image' && element.imageSrc) {
+      const imageBuffer = await fetchImageAsArrayBuffer(element.imageSrc);
+      if (imageBuffer) {
+        const maxWidth = 450;
+        const maxHeight = 400;
+        let width = element.imageWidth || 400;
+        let height = element.imageHeight || 300;
+        
+        // Scale image to fit
+        if (width > maxWidth) {
+          height = (height * maxWidth) / width;
+          width = maxWidth;
+        }
+        if (height > maxHeight) {
+          width = (width * maxHeight) / height;
+          height = maxHeight;
+        }
+        
+        contentChildren.push(new Paragraph({
+          children: [
+            new ImageRun({
+              data: imageBuffer,
+              transformation: { width, height },
+              type: 'png',
+            }),
+          ],
+          alignment: AlignmentType.CENTER,
+          spacing: { before: 200, after: 200 }
+        }));
+      }
+      continue;
+    }
+    
     const textRuns = element.runs.map(run => {
       const runOptions: IRunOptions = {
         text: run.text,
@@ -244,21 +363,21 @@ export async function exportToDOCX(options: ExportOptions): Promise<void> {
     });
     
     if (element.type === 'heading1') {
-      children.push(new Paragraph({
+      contentChildren.push(new Paragraph({
         children: textRuns,
         alignment: getDocxAlignment(element.align),
         heading: HeadingLevel.HEADING_1,
         spacing: { before: 400, after: 200 }
       }));
     } else if (element.type === 'heading2') {
-      children.push(new Paragraph({
+      contentChildren.push(new Paragraph({
         children: textRuns,
         alignment: getDocxAlignment(element.align),
         heading: HeadingLevel.HEADING_2,
         spacing: { before: 300, after: 150 }
       }));
     } else if (element.type === 'heading3') {
-      children.push(new Paragraph({
+      contentChildren.push(new Paragraph({
         children: textRuns,
         alignment: getDocxAlignment(element.align),
         heading: HeadingLevel.HEADING_3,
@@ -266,7 +385,7 @@ export async function exportToDOCX(options: ExportOptions): Promise<void> {
       }));
     } else if (element.type === 'list-item') {
       listCounter = 0;
-      children.push(new Paragraph({
+      contentChildren.push(new Paragraph({
         children: textRuns,
         alignment: getDocxAlignment(element.align),
         bullet: { level: element.listLevel || 0 },
@@ -275,30 +394,31 @@ export async function exportToDOCX(options: ExportOptions): Promise<void> {
     } else if (element.type === 'ordered-item') {
       listCounter++;
       textRuns.unshift(new TextRun({ text: `${listCounter}. `, size: 24 }));
-      children.push(new Paragraph({
+      contentChildren.push(new Paragraph({
         children: textRuns,
         alignment: getDocxAlignment(element.align),
         spacing: { after: 200 }
       }));
     } else {
-      children.push(new Paragraph({
+      contentChildren.push(new Paragraph({
         children: textRuns,
         alignment: getDocxAlignment(element.align),
         spacing: { after: 200 }
       }));
     }
+  }
+  
+  sections.push({
+    properties: {
+      type: sections.length > 0 ? SectionType.NEXT_PAGE : SectionType.CONTINUOUS,
+      page: {
+        margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
+      }
+    },
+    children: contentChildren
   });
   
-  const doc = new Document({
-    sections: [{
-      properties: {
-        page: {
-          margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
-        }
-      },
-      children
-    }]
-  });
+  const doc = new Document({ sections });
   
   const blob = await Packer.toBlob(doc);
   const safeTitle = title.replace(/[<>:"/\\|?*]/g, '').trim() || 'ebook';
@@ -335,7 +455,7 @@ export async function exportToPDF(options: ExportOptions): Promise<void> {
     }
   }
   
-  // Only add title page if NO cover was added (cover already has title/author)
+  // Only add title page if NO cover was added
   let yPos = margin;
   
   if (!hasCover) {
@@ -367,25 +487,72 @@ export async function exportToPDF(options: ExportOptions): Promise<void> {
       yPos = margin;
     }
     
+    // Handle images
+    if (element.type === 'image' && element.imageSrc) {
+      try {
+        // Try to load the image
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject();
+          img.src = element.imageSrc!;
+        });
+        
+        const maxWidth = contentWidth;
+        const maxHeight = 300;
+        let width = element.imageWidth || img.width || 400;
+        let height = element.imageHeight || img.height || 300;
+        
+        // Scale to fit
+        if (width > maxWidth) {
+          height = (height * maxWidth) / width;
+          width = maxWidth;
+        }
+        if (height > maxHeight) {
+          width = (width * maxHeight) / height;
+          height = maxHeight;
+        }
+        
+        // Check if need new page for image
+        if (yPos + height > maxY) {
+          pdf.addPage();
+          yPos = margin;
+        }
+        
+        const xPos = margin + (contentWidth - width) / 2;
+        
+        // Create canvas to draw image
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0);
+        
+        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', xPos, yPos, width, height);
+        yPos += height + 20;
+      } catch {
+        console.warn('Could not load image for PDF:', element.imageSrc);
+      }
+      continue;
+    }
+    
     // Set font based on element type
     let fontSize = 12;
-    let fontStyle: 'normal' | 'bold' | 'italic' | 'bolditalic' = 'normal';
     let spacingBefore = 0;
     let spacingAfter = 8;
     
     if (element.type === 'heading1') {
       fontSize = 24;
-      fontStyle = 'bold';
       spacingBefore = 20;
       spacingAfter = 12;
     } else if (element.type === 'heading2') {
       fontSize = 18;
-      fontStyle = 'bold';
       spacingBefore = 16;
       spacingAfter = 10;
     } else if (element.type === 'heading3') {
       fontSize = 14;
-      fontStyle = 'bold';
       spacingBefore = 12;
       spacingAfter = 8;
     } else if (element.type === 'list-item') {
@@ -408,19 +575,28 @@ export async function exportToPDF(options: ExportOptions): Promise<void> {
       xPos = margin + 20;
     }
     
-    // Combine runs into text (jsPDF doesn't support mixed inline styles well, so we take the first style)
-    const hasBold = element.runs.some(r => r.bold);
-    const hasItalic = element.runs.some(r => r.italic);
-    
-    if (hasBold && hasItalic) fontStyle = 'bolditalic';
-    else if (hasBold) fontStyle = 'bold';
-    else if (hasItalic) fontStyle = 'italic';
-    
-    textContent += element.runs.map(r => r.text).join('');
+    // Process each run with its own style
+    const fullText = element.runs.map(r => r.text).join('');
+    textContent += fullText;
     
     if (!textContent.trim()) {
       yPos += lineHeight;
       continue;
+    }
+    
+    // Determine font style - apply bold only to headings, not body text
+    let fontStyle: 'normal' | 'bold' | 'italic' | 'bolditalic' = 'normal';
+    
+    if (element.type.startsWith('heading')) {
+      fontStyle = 'bold';
+    } else {
+      // For regular paragraphs, check if ALL runs are bold (not just any)
+      const allBold = element.runs.length > 0 && element.runs.every(r => r.bold);
+      const allItalic = element.runs.length > 0 && element.runs.every(r => r.italic);
+      
+      if (allBold && allItalic) fontStyle = 'bolditalic';
+      else if (allBold) fontStyle = 'bold';
+      else if (allItalic) fontStyle = 'italic';
     }
     
     pdf.setFontSize(fontSize);
