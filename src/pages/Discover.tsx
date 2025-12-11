@@ -39,7 +39,6 @@ interface Profile {
   full_name?: string;
   username?: string;
   avatar_url?: string;
-  bio?: string;
 }
 const Discover = () => {
   const {
@@ -102,7 +101,7 @@ const Discover = () => {
   const fetchProfiles = async () => {
     const {
       data
-    } = await supabase.from("profiles").select("id, full_name, username, avatar_url, bio").neq("id", currentUserId).order("full_name");
+    } = await supabase.from("profiles").select("id, full_name, username, avatar_url").neq("id", currentUserId).order("full_name");
     if (data) {
       setProfiles(data);
     }
@@ -331,7 +330,7 @@ const Discover = () => {
                       <h3 className="font-semibold text-lg truncate">
                         {profile.full_name || profile.username || "Usuário"}
                       </h3>
-                      {profile.bio && <p className="text-sm text-muted-foreground line-clamp-2">{profile.bio}</p>}
+                      
                     </div>
                   </div>)}
               </div>}

@@ -14,6 +14,7 @@ import { ptBR } from "date-fns/locale";
 import { BookCard } from "@/components/BookCard";
 import BottomNav from "@/components/BottomNav";
 import { stripHtml } from "@/lib/utils";
+import { exportToPDF } from "@/services/exportService";
 interface Ebook {
   id: string;
   title: string;
@@ -60,7 +61,9 @@ export default function BookDetails() {
   const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [showAllReviews, setShowAllReviews] = useState(false);
   const [sortBy, setSortBy] = useState<"recent" | "oldest" | "highest">("recent");
-  const [authorProfile, setAuthorProfile] = useState<{ full_name?: string; avatar_url?: string; bio?: string } | null>(null);
+  const [authorProfile, setAuthorProfile] = useState<{ full_name?: string; avatar_url?: string } | null>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+  
   useEffect(() => {
     fetchBookDetails();
     checkWishlistStatus();
@@ -129,9 +132,9 @@ export default function BookDetails() {
         // Fetch author profile
         const { data: profileData } = await supabase
           .from("profiles")
-          .select("full_name, avatar_url, bio")
+          .select("full_name, avatar_url")
           .eq("id", bookData.user_id)
-          .single();
+          .maybeSingle();
         setAuthorProfile(profileData);
       }
     } catch (error) {
@@ -256,6 +259,48 @@ export default function BookDetails() {
       fetchBookDetails();
     }
   };
+
+  const handleDownload = async () => {
+    if (!book) return;
+    
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user && book.price && book.price > 0) {
+      toast.error("Faça login para baixar este livro");
+      return;
+    }
+    
+    setIsDownloading(true);
+    try {
+      // Fetch book content (chapters)
+      const { data: chapters } = await supabase
+        .from("chapters")
+        .select("content")
+        .eq("ebook_id", book.id)
+        .order("order_index");
+      
+      const content = chapters?.map(c => c.content).join("\n\n") || book.description || "";
+      
+      await exportToPDF({
+        title: stripHtml(book.title),
+        author: book.author,
+        content,
+        hasCoverPage: true
+      });
+      
+      // Update download count
+      await supabase.from("ebooks").update({ 
+        downloads: (book.downloads || 0) + 1 
+      }).eq("id", book.id);
+      
+      toast.success("Download iniciado!");
+    } catch (error) {
+      console.error("Download error:", error);
+      toast.error("Erro ao baixar o livro");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   if (loading) {
     return <div className="min-h-screen bg-background flex items-center justify-center">
         <p>Carregando...</p>
@@ -325,8 +370,9 @@ export default function BookDetails() {
 
             {/* Action Buttons */}
             <div className="flex flex-col sm:flex-row gap-3">
-              <Button size="lg" className="flex-1 py-[8px]">
-                {book.price === 0 ? "Baixar Grátis" : `Comprar - ${book.price?.toFixed(2)} MZN`}
+              <Button size="lg" className="flex-1 py-[8px]" onClick={handleDownload} disabled={isDownloading}>
+                <Download className="h-4 w-4 mr-2" />
+                {isDownloading ? "A baixar..." : book.price === 0 ? "Baixar Grátis" : `Comprar - ${book.price?.toFixed(2)} MZN`}
               </Button>
               <Button variant="outline" size="lg" onClick={toggleWishlist} className="flex-1 py-[8px]">
                 <Heart className={`h-4 w-4 mr-2 ${isInWishlist ? "fill-current" : ""}`} />
@@ -377,7 +423,7 @@ export default function BookDetails() {
                 >
                   {authorProfile?.full_name || book.author}
                 </h3>
-                {authorProfile?.bio && <p className="text-muted-foreground">{authorProfile.bio}</p>}
+                
               </div>
             </div>
           </div>
