@@ -10,6 +10,7 @@ import CoverPreview from "@/components/CoverPreview";
 import { coverTemplates, CoverTemplate } from "@/components/templates/covers";
 import { ArrowLeft, Save, Download, FileText, ImageIcon } from "lucide-react";
 import { exportToPDF, exportToDOCX } from "@/services/exportService";
+import ExportPreviewDialog from "@/components/ExportPreviewDialog";
 
 const PagedPreview = lazy(() => import("@/components/PagedPreview"));
 
@@ -137,13 +138,14 @@ export default function Editor() {
   const handleDownloadPDF = async () => {
     if (!ebook) return;
     try {
-      const coverEl = document.querySelector('.cover-preview-container') as HTMLElement | null;
+      // Use the hidden export cover element
+      const coverEl = document.querySelector('.export-cover-container') as HTMLElement | null;
       await exportToPDF({
         title: ebook.title,
         author: ebook.author,
         content,
         coverElement: coverEl,
-        hasCoverPage: true // Cover already has title/author, don't duplicate
+        hasCoverPage: true
       });
       toast({ title: "PDF gerado!", description: "O download foi iniciado." });
     } catch (error: unknown) {
@@ -154,13 +156,14 @@ export default function Editor() {
   const handleDownloadDOCX = async () => {
     if (!ebook) return;
     try {
-      const coverEl = document.querySelector('.cover-preview-container') as HTMLElement | null;
+      // Use the hidden export cover element
+      const coverEl = document.querySelector('.export-cover-container') as HTMLElement | null;
       await exportToDOCX({
         title: ebook.title,
         author: ebook.author,
         content,
         coverElement: coverEl,
-        hasCoverPage: true // Cover already has title/author, don't duplicate
+        hasCoverPage: true
       });
       toast({ title: "DOCX gerado!", description: "O download foi iniciado." });
     } catch (error: unknown) {
@@ -184,6 +187,28 @@ export default function Editor() {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Hidden cover for export - always rendered at full size */}
+      <div 
+        className="export-cover-container"
+        style={{
+          position: 'absolute',
+          left: '-9999px',
+          top: 0,
+          width: '8.5in',
+          height: '11in',
+          overflow: 'hidden',
+          backgroundColor: '#ffffff'
+        }}
+      >
+        <CoverPreview 
+          template={selectedCoverTemplate} 
+          title={ebook.title} 
+          author={ebook.author} 
+          coverImage={coverImagePreview} 
+          genre={ebook.genre} 
+        />
+      </div>
+      
       <header className="border-b bg-card">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between flex-wrap gap-4">
@@ -194,6 +219,16 @@ export default function Editor() {
             <div className="flex gap-2 flex-wrap">
               <Button variant="outline" size="sm" onClick={handleSave} disabled={saving}><Save className="h-4 w-4 mr-2" />{saving ? "Salvando..." : "Salvar"}</Button>
               <Button variant="outline" size="sm" onClick={() => setActiveTab(activeTab === "edit" ? "preview" : "edit")}>{activeTab === "edit" ? "Visualizar" : "Editar"}</Button>
+              <ExportPreviewDialog
+                title={ebook.title}
+                author={ebook.author}
+                content={content}
+                coverTemplate={selectedCoverTemplate}
+                coverImage={coverImagePreview}
+                genre={ebook.genre}
+                onDownloadPDF={handleDownloadPDF}
+                onDownloadDOCX={handleDownloadDOCX}
+              />
               <Button size="sm" onClick={handleDownloadPDF}><Download className="h-4 w-4 mr-2" />PDF</Button>
               <Button size="sm" onClick={handleDownloadDOCX} variant="secondary"><Download className="h-4 w-4 mr-2" />DOCX</Button>
             </div>

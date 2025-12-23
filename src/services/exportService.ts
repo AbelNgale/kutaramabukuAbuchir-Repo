@@ -1,4 +1,4 @@
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, PageBreak, IRunOptions, ImageRun, SectionType } from 'docx';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, PageBreak, IRunOptions, ImageRun, ISectionOptions } from 'docx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { saveAs } from 'file-saver';
@@ -50,14 +50,14 @@ function parseHtmlContent(html: string): ParsedElement[] {
     function processNode(n: Node, styles: { bold?: boolean; italic?: boolean; underline?: boolean } = {}) {
       if (n.nodeType === Node.TEXT_NODE) {
         const text = n.textContent || '';
-        if (text.trim() || text.includes(' ')) {
+        if (text) {
           runs.push({ text, ...styles });
         }
       } else if (n.nodeType === Node.ELEMENT_NODE) {
         const el = n as Element;
         const tagName = el.tagName.toLowerCase();
         
-        // Skip images in inline content
+        // Skip image tags in inline content - they're handled separately
         if (tagName === 'img') return;
         
         const newStyles = { ...styles };
@@ -78,30 +78,20 @@ function parseHtmlContent(html: string): ParsedElement[] {
     
     // Handle images
     if (tagName === 'img') {
-      const src = (el as HTMLImageElement).src;
-      const width = (el as HTMLImageElement).width || 400;
-      const height = (el as HTMLImageElement).height || 300;
-      if (src) {
-        elements.push({
-          type: 'image',
-          runs: [],
-          imageSrc: src,
-          imageWidth: width,
-          imageHeight: height,
-          align: 'center'
-        });
-      }
+      const img = el as HTMLImageElement;
+      elements.push({
+        type: 'image',
+        runs: [],
+        imageSrc: img.src,
+        imageWidth: img.naturalWidth || img.width || 400,
+        imageHeight: img.naturalHeight || img.height || 300,
+        align: 'center'
+      });
       return;
     }
     
-    // Check for images inside figures
-    if (tagName === 'figure') {
-      const img = el.querySelector('img');
-      if (img) {
-        processElement(img);
-      }
-      return;
-    }
+    // Check for images inside element first
+    const images = el.querySelectorAll('img');
     
     if (tagName === 'h1') {
       elements.push({
@@ -122,11 +112,17 @@ function parseHtmlContent(html: string): ParsedElement[] {
         align: getAlignment(el)
       });
     } else if (tagName === 'p' || tagName === 'div') {
-      // Check for images inside paragraphs
-      const img = el.querySelector('img');
-      if (img) {
-        processElement(img);
-      }
+      // Process images inside paragraphs/divs
+      images.forEach(img => {
+        elements.push({
+          type: 'image',
+          runs: [],
+          imageSrc: img.src,
+          imageWidth: img.naturalWidth || img.width || 400,
+          imageHeight: img.naturalHeight || img.height || 300,
+          align: getAlignment(el)
+        });
+      });
       
       const runs = parseInlineContent(el);
       if (runs.length > 0 && runs.some(r => r.text.trim())) {
@@ -157,7 +153,20 @@ function parseHtmlContent(html: string): ParsedElement[] {
         type: 'paragraph',
         runs: [{ text: '' }]
       });
+    } else if (tagName === 'figure') {
+      // Handle figure elements (common wrapper for images)
+      images.forEach(img => {
+        elements.push({
+          type: 'image',
+          runs: [],
+          imageSrc: img.src,
+          imageWidth: img.naturalWidth || img.width || 400,
+          imageHeight: img.naturalHeight || img.height || 300,
+          align: 'center'
+        });
+      });
     } else {
+      // Process children for other elements
       el.childNodes.forEach(child => {
         if (child.nodeType === Node.ELEMENT_NODE) {
           processElement(child as Element, listLevel);
@@ -200,42 +209,112 @@ function getDocxAlignment(align?: string): typeof AlignmentType[keyof typeof Ali
   }
 }
 
-async function fetchImageAsArrayBuffer(src: string): Promise<ArrayBuffer | null> {
+async function waitForImages(element: HTMLElement, timeout = 3000): Promise<void> {
+  const images = element.querySelectorAll('img');
+  const promises = Array.from(images).map(img => {
+    if (img.complete) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, timeout);
+      img.onload = () => { clearTimeout(timer); resolve(); };
+      img.onerror = () => { clearTimeout(timer); resolve(); };
+    });
+  });
+  await Promise.all(promises);
+}
+
+// Convert image to base64 via canvas (works for CORS-blocked images)
+async function imageToBase64ViaCanvas(src: string): Promise<{ dataUrl: string; width: number; height: number } | null> {
+  return new Promise((resolve) => {
+    const img = new window.Image();
+    img.crossOrigin = 'anonymous';
+    
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || img.width;
+        canvas.height = img.naturalHeight || img.height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          const dataUrl = canvas.toDataURL('image/png');
+          resolve({ dataUrl, width: canvas.width, height: canvas.height });
+        } else {
+          resolve(null);
+        }
+      } catch (e) {
+        console.error('Canvas conversion failed:', e);
+        resolve(null);
+      }
+    };
+    
+    img.onerror = () => {
+      console.error('Image load failed for:', src);
+      resolve(null);
+    };
+    
+    // Set timeout to avoid hanging
+    setTimeout(() => resolve(null), 10000);
+    
+    img.src = src;
+  });
+}
+
+// Fetch image as ArrayBuffer for DOCX
+async function fetchImageAsArrayBuffer(src: string): Promise<{ data: ArrayBuffer; width: number; height: number } | null> {
   try {
-    // For external images, try to fetch with CORS
-    const response = await fetch(src, { mode: 'cors' });
-    if (response.ok) {
-      return await response.arrayBuffer();
-    }
-  } catch {
-    // If CORS fails, try using a canvas approach
-    try {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      
-      return new Promise((resolve) => {
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = img.width;
-          canvas.height = img.height;
-          const ctx = canvas.getContext('2d');
-          ctx?.drawImage(img, 0, 0);
-          canvas.toBlob((blob) => {
-            if (blob) {
-              blob.arrayBuffer().then(resolve);
-            } else {
-              resolve(null);
-            }
-          }, 'image/png');
-        };
-        img.onerror = () => resolve(null);
-        img.src = src;
+    // Handle data URLs
+    if (src.startsWith('data:')) {
+      const base64 = src.split(',')[1];
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      // Try to get dimensions from a temporary image
+      const tempImg = new window.Image();
+      const dimensions = await new Promise<{ width: number; height: number }>((resolve) => {
+        tempImg.onload = () => resolve({ width: tempImg.naturalWidth || 400, height: tempImg.naturalHeight || 300 });
+        tempImg.onerror = () => resolve({ width: 400, height: 300 });
+        tempImg.src = src;
       });
-    } catch {
-      return null;
+      return { data: bytes.buffer, ...dimensions };
     }
+    
+    // Try fetching directly first
+    try {
+      const response = await fetch(src, { mode: 'cors' });
+      if (response.ok) {
+        const data = await response.arrayBuffer();
+        // Get dimensions
+        const tempImg = new window.Image();
+        const dimensions = await new Promise<{ width: number; height: number }>((resolve) => {
+          tempImg.onload = () => resolve({ width: tempImg.naturalWidth || 400, height: tempImg.naturalHeight || 300 });
+          tempImg.onerror = () => resolve({ width: 400, height: 300 });
+          tempImg.src = src;
+        });
+        return { data, ...dimensions };
+      }
+    } catch (fetchErr) {
+      console.log('Direct fetch failed, trying canvas fallback');
+    }
+    
+    // Fallback: use canvas to convert image (bypasses CORS for display)
+    const canvasResult = await imageToBase64ViaCanvas(src);
+    if (canvasResult) {
+      const base64 = canvasResult.dataUrl.split(',')[1];
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return { data: bytes.buffer, width: canvasResult.width, height: canvasResult.height };
+    }
+    
+    return null;
+  } catch (err) {
+    console.error('Error fetching image:', err);
+    return null;
   }
-  return null;
 }
 
 export async function exportToDOCX(options: ExportOptions): Promise<void> {
@@ -243,50 +322,68 @@ export async function exportToDOCX(options: ExportOptions): Promise<void> {
   
   const parsedContent = parseHtmlContent(content);
   
-  const sections: any[] = [];
+  const sections: ISectionOptions[] = [];
   
-  // Add cover as first section (full page, no margins)
-  if (coverElement) {
+  // Add cover as a separate section with zero margins if available
+  if (coverElement && coverElement.offsetWidth > 0 && coverElement.offsetHeight > 0) {
     try {
+      await waitForImages(coverElement);
+      
       const canvas = await html2canvas(coverElement, {
         scale: 2,
         useCORS: true,
         allowTaint: true,
-        backgroundColor: '#ffffff'
+        backgroundColor: '#ffffff',
+        logging: false,
+        imageTimeout: 5000,
+        onclone: (clonedDoc, clonedElement) => {
+          clonedElement.style.width = '8.5in';
+          clonedElement.style.height = '11in';
+        }
       });
       
-      const blob = await new Promise<Blob>((resolve) => {
-        canvas.toBlob((b) => resolve(b!), 'image/png', 1.0);
-      });
-      
-      const arrayBuffer = await blob.arrayBuffer();
-      
-      // Cover section with zero margins - A4 dimensions in points (595x842)
-      sections.push({
-        properties: {
-          type: SectionType.NEXT_PAGE,
-          page: {
-            margin: { top: 0, right: 0, bottom: 0, left: 0 },
-            size: { width: 11906, height: 16838 } // A4 in twips (1/20 of a point)
-          }
-        },
-        children: [
-          new Paragraph({
-            children: [
-              new ImageRun({
-                data: arrayBuffer,
-                transformation: {
-                  width: 595, // A4 width in points
-                  height: 842, // A4 height in points
-                },
-                type: 'png',
-              }),
-            ],
-            alignment: AlignmentType.CENTER,
-            spacing: { before: 0, after: 0 }
-          })
-        ]
-      });
+      if (canvas.width > 0 && canvas.height > 0) {
+        const blob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob((b) => {
+            if (b) resolve(b);
+            else reject(new Error('Failed to create blob'));
+          }, 'image/png', 1.0);
+        });
+        
+        const arrayBuffer = await blob.arrayBuffer();
+        
+        // Cover section - ImageRun uses pixels for transformation
+        // 8.5in x 11in at 96 DPI = 816 x 1056 pixels
+        const pageWidthPx = 816;
+        const pageHeightPx = 1056;
+        
+        sections.push({
+          properties: {
+            page: {
+              margin: { top: 0, right: 0, bottom: 0, left: 0 },
+              size: {
+                width: 12240, // 8.5in in twips
+                height: 15840, // 11in in twips
+              }
+            }
+          },
+          children: [
+            new Paragraph({
+              children: [
+                new ImageRun({
+                  data: new Uint8Array(arrayBuffer),
+                  transformation: {
+                    width: pageWidthPx,
+                    height: pageHeightPx,
+                  },
+                  type: 'png',
+                }),
+              ],
+              spacing: { before: 0, after: 0, line: 240 }
+            }),
+          ]
+        });
+      }
     } catch (err) {
       console.error('Cover capture error for DOCX:', err);
     }
@@ -296,7 +393,7 @@ export async function exportToDOCX(options: ExportOptions): Promise<void> {
   const contentChildren: Paragraph[] = [];
   
   // Only add title page if no cover
-  if (!coverElement && !hasCoverPage) {
+  if (sections.length === 0 && !hasCoverPage) {
     contentChildren.push(new Paragraph({
       text: title,
       heading: HeadingLevel.TITLE,
@@ -321,34 +418,45 @@ export async function exportToDOCX(options: ExportOptions): Promise<void> {
   for (const element of parsedContent) {
     // Handle images
     if (element.type === 'image' && element.imageSrc) {
-      const imageBuffer = await fetchImageAsArrayBuffer(element.imageSrc);
-      if (imageBuffer) {
-        const maxWidth = 450;
-        const maxHeight = 400;
-        let width = element.imageWidth || 400;
-        let height = element.imageHeight || 300;
+      const imageResult = await fetchImageAsArrayBuffer(element.imageSrc);
+      if (imageResult && imageResult.data.byteLength > 0) {
+        // ImageRun uses pixels for transformation
+        // Max width 5 inches at 96 DPI = 480 pixels
+        const maxWidthPx = 480;
         
-        // Scale image to fit
-        if (width > maxWidth) {
-          height = (height * maxWidth) / width;
-          width = maxWidth;
-        }
-        if (height > maxHeight) {
-          width = (width * maxHeight) / height;
-          height = maxHeight;
+        let widthPx = imageResult.width || element.imageWidth || 400;
+        let heightPx = imageResult.height || element.imageHeight || 300;
+        
+        // Scale down if too wide
+        if (widthPx > maxWidthPx) {
+          const ratio = maxWidthPx / widthPx;
+          widthPx = maxWidthPx;
+          heightPx = heightPx * ratio;
         }
         
-        contentChildren.push(new Paragraph({
-          children: [
-            new ImageRun({
-              data: imageBuffer,
-              transformation: { width, height },
-              type: 'png',
-            }),
-          ],
-          alignment: AlignmentType.CENTER,
-          spacing: { before: 200, after: 200 }
-        }));
+        // Detect image type from data URL or default to png
+        let imageType: 'png' | 'jpg' | 'gif' | 'bmp' = 'png';
+        if (element.imageSrc.includes('image/jpeg') || element.imageSrc.includes('.jpg') || element.imageSrc.includes('.jpeg')) {
+          imageType = 'jpg';
+        } else if (element.imageSrc.includes('image/gif') || element.imageSrc.includes('.gif')) {
+          imageType = 'gif';
+        }
+        
+        try {
+          contentChildren.push(new Paragraph({
+            children: [
+              new ImageRun({
+                data: new Uint8Array(imageResult.data),
+                transformation: { width: Math.round(widthPx), height: Math.round(heightPx) },
+                type: imageType,
+              }),
+            ],
+            alignment: getDocxAlignment(element.align),
+            spacing: { before: 200, after: 200 }
+          }));
+        } catch (imgErr) {
+          console.error('Error adding image to DOCX:', imgErr);
+        }
       }
       continue;
     }
@@ -410,9 +518,9 @@ export async function exportToDOCX(options: ExportOptions): Promise<void> {
     }
   }
   
+  // Add content section with standard margins
   sections.push({
     properties: {
-      type: sections.length > 0 ? SectionType.NEXT_PAGE : SectionType.CONTINUOUS,
       page: {
         margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
       }
@@ -441,23 +549,33 @@ export async function exportToPDF(options: ExportOptions): Promise<void> {
   let hasCover = false;
   
   // Add cover if available
-  if (coverElement) {
+  if (coverElement && coverElement.offsetWidth > 0 && coverElement.offsetHeight > 0) {
     try {
+      await waitForImages(coverElement);
+      
       const canvas = await html2canvas(coverElement, {
         scale: 2,
         useCORS: true,
         allowTaint: true,
-        backgroundColor: '#ffffff'
+        backgroundColor: '#ffffff',
+        logging: false,
+        imageTimeout: 5000,
+        onclone: (clonedDoc, clonedElement) => {
+          clonedElement.style.width = '8.5in';
+          clonedElement.style.height = '11in';
+        }
       });
-      pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, pageWidth, pageHeight);
-      hasCover = true;
-      pdf.addPage();
+      
+      if (canvas.width > 0 && canvas.height > 0) {
+        pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, pageWidth, pageHeight);
+        hasCover = true;
+        pdf.addPage();
+      }
     } catch (err) {
       console.error('Cover capture error:', err);
     }
   }
   
-  // Only add title page if NO cover was added
   let yPos = margin;
   
   if (!hasCover) {
@@ -478,64 +596,68 @@ export async function exportToPDF(options: ExportOptions): Promise<void> {
     yPos = margin;
   }
   
-  // Parse and render content
   const parsedContent = parseHtmlContent(content);
   let listCounter = 0;
   
   for (const element of parsedContent) {
-    // Check if we need a new page
     if (yPos > maxY - 40) {
       pdf.addPage();
       yPos = margin;
     }
     
-    // Handle images
+    // Handle images in PDF
     if (element.type === 'image' && element.imageSrc) {
       try {
-        // Try to load the image
         const img = new Image();
         img.crossOrigin = 'anonymous';
         
         await new Promise<void>((resolve, reject) => {
           img.onload = () => resolve();
-          img.onerror = () => reject();
+          img.onerror = () => reject(new Error('Image load failed'));
           img.src = element.imageSrc!;
         });
         
-        const maxWidth = contentWidth;
-        const maxHeight = 300;
-        let width = element.imageWidth || img.width || 400;
-        let height = element.imageHeight || img.height || 300;
+        // Calculate dimensions to fit within page
+        let imgWidth = element.imageWidth || img.width || 400;
+        let imgHeight = element.imageHeight || img.height || 300;
+        const maxImgWidth = contentWidth;
+        const maxImgHeight = maxY - yPos - 40;
         
-        // Scale to fit
-        if (width > maxWidth) {
-          height = (height * maxWidth) / width;
-          width = maxWidth;
-        }
-        if (height > maxHeight) {
-          width = (width * maxHeight) / height;
-          height = maxHeight;
+        // Scale to fit width
+        if (imgWidth > maxImgWidth) {
+          const ratio = maxImgWidth / imgWidth;
+          imgWidth = maxImgWidth;
+          imgHeight = imgHeight * ratio;
         }
         
-        // Check if need new page for image
-        if (yPos + height > maxY) {
+        // Scale to fit height if needed
+        if (imgHeight > maxImgHeight && maxImgHeight > 100) {
+          const ratio = maxImgHeight / imgHeight;
+          imgHeight = maxImgHeight;
+          imgWidth = imgWidth * ratio;
+        }
+        
+        // If image is too tall for remaining space, start new page
+        if (imgHeight > maxY - yPos - 20) {
           pdf.addPage();
           yPos = margin;
         }
         
-        const xPos = margin + (contentWidth - width) / 2;
+        // Center the image
+        const imgX = margin + (contentWidth - imgWidth) / 2;
         
-        // Create canvas to draw image
+        // Create canvas to convert image
         const canvas = document.createElement('canvas');
         canvas.width = img.width;
         canvas.height = img.height;
         const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0);
-        
-        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', xPos, yPos, width, height);
-        yPos += height + 20;
-      } catch {
-        console.warn('Could not load image for PDF:', element.imageSrc);
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          pdf.addImage(canvas.toDataURL('image/jpeg', 0.9), 'JPEG', imgX, yPos, imgWidth, imgHeight);
+          yPos += imgHeight + 20;
+        }
+      } catch (err) {
+        console.error('Error adding image to PDF:', err);
       }
       continue;
     }
@@ -565,59 +687,65 @@ export async function exportToPDF(options: ExportOptions): Promise<void> {
     
     yPos += spacingBefore;
     
-    // Build text content
+    // Build text content with proper inline styling
     let xPos = margin;
-    let textContent = '';
     
     if (element.type === 'list-item') {
-      textContent = '• ';
       xPos = margin + 20;
     } else if (element.type === 'ordered-item') {
-      textContent = `${listCounter}. `;
       xPos = margin + 20;
     }
     
-    // Process each run with its own style
-    const fullText = element.runs.map(r => r.text).join('');
-    textContent += fullText;
-    
-    if (!textContent.trim()) {
-      yPos += lineHeight;
-      continue;
-    }
-    
-    // Determine font style - apply bold only to headings, not body text
-    let fontStyle: 'normal' | 'bold' | 'italic' | 'bolditalic' = 'normal';
-    
-    if (element.type.startsWith('heading')) {
-      fontStyle = 'bold';
-    } else {
-      // For regular paragraphs, check if ALL runs are bold (not just any)
-      const allBold = element.runs.length > 0 && element.runs.every(r => r.bold);
-      const allItalic = element.runs.length > 0 && element.runs.every(r => r.italic);
-      
-      if (allBold && allItalic) fontStyle = 'bolditalic';
-      else if (allBold) fontStyle = 'bold';
-      else if (allItalic) fontStyle = 'italic';
-    }
-    
-    pdf.setFontSize(fontSize);
-    pdf.setFont('helvetica', fontStyle);
-    
     // Get alignment
-    let align: 'left' | 'center' | 'right' | 'justify' = 'left';
+    let align: 'left' | 'center' | 'right' = 'left';
     if (element.align === 'center') align = 'center';
     else if (element.align === 'right') align = 'right';
-    else if (element.align === 'justify') align = 'justify';
     
-    // Calculate x position based on alignment
     let textX = xPos;
     if (align === 'center') textX = pageWidth / 2;
     else if (align === 'right') textX = pageWidth - margin;
     
-    // Split text into lines that fit the content width
     const effectiveWidth = element.type.includes('item') ? contentWidth - 20 : contentWidth;
-    const lines = pdf.splitTextToSize(textContent, effectiveWidth);
+    
+    // Process runs individually for proper formatting
+    // jsPDF doesn't support mixed inline styles well, so we render each run
+    // For headings, always use bold
+    const isHeading = element.type.startsWith('heading');
+    
+    // Build complete text for line wrapping
+    let prefix = '';
+    if (element.type === 'list-item') prefix = '• ';
+    else if (element.type === 'ordered-item') prefix = `${listCounter}. `;
+    
+    const fullText = prefix + element.runs.map(r => r.text).join('');
+    
+    if (!fullText.trim()) {
+      yPos += lineHeight;
+      continue;
+    }
+    
+    pdf.setFontSize(fontSize);
+    
+    // Determine font style - only apply bold for headings, otherwise use run styles
+    if (isHeading) {
+      pdf.setFont('helvetica', 'bold');
+    } else {
+      // For non-headings, check if ALL runs are bold (not just some)
+      const allBold = element.runs.length > 0 && element.runs.every(r => r.bold);
+      const allItalic = element.runs.length > 0 && element.runs.every(r => r.italic);
+      
+      if (allBold && allItalic) {
+        pdf.setFont('helvetica', 'bolditalic');
+      } else if (allBold) {
+        pdf.setFont('helvetica', 'bold');
+      } else if (allItalic) {
+        pdf.setFont('helvetica', 'italic');
+      } else {
+        pdf.setFont('helvetica', 'normal');
+      }
+    }
+    
+    const lines = pdf.splitTextToSize(fullText, effectiveWidth);
     
     for (const line of lines) {
       if (yPos > maxY) {
@@ -625,7 +753,7 @@ export async function exportToPDF(options: ExportOptions): Promise<void> {
         yPos = margin;
       }
       
-      pdf.text(line, textX, yPos, { align: align === 'justify' ? 'left' : align });
+      pdf.text(line, textX, yPos, { align });
       yPos += lineHeight;
     }
     

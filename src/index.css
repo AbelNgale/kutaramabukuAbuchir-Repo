@@ -224,6 +224,10 @@ All colors MUST be HSL.
   display: none !important;
 }
 
+#lovable-badge {
+  display: none !important;
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
   .ckeditor-container .ck-toolbar {

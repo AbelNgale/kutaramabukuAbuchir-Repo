@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTheme } from "next-themes";
 import { supabase } from "@/integrations/supabase/client";
@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, BookOpen, Upload, Sparkles, Type, Image, Minus, FileText, ArrowRight, Check, X } from "lucide-react";
+import { ArrowLeft, BookOpen, Upload, Sparkles, Type, Image, Minus, FileText, ArrowRight, Check, X, Loader2 } from "lucide-react";
 import logo from "@/assets/logo-new.png";
 import { EBOOK_TEMPLATES } from "@/components/templates/ebooks";
 import { ebookSchema, chapterSchema } from "@/lib/validations";
@@ -49,6 +49,24 @@ const CreateEbook = () => {
   const {
     theme
   } = useTheme();
+
+  // Memoized origin options to prevent re-renders
+  const originOptions = useMemo(() => [{
+    id: "blank" as const,
+    name: "Criar do Zero",
+    description: "Comece com um eBook em branco e crie seu conteúdo",
+    icon: BookOpen,
+    gradient: "from-[#70CBD4] to-[#69A1EB]",
+    recommended: true
+  }, {
+    id: "import" as const,
+    name: "Importar EPUB/PDF",
+    description: "Faça upload de um arquivo existente para converter",
+    icon: Upload,
+    gradient: "from-[#70CBD4] to-[#69A1EB]",
+    recommended: false
+  }], []);
+
   useEffect(() => {
     checkUser();
     loadUserProfile();
@@ -87,7 +105,7 @@ const CreateEbook = () => {
       }
     }
   };
-  const handleCreateEbook = async () => {
+  const handleCreateEbook = useCallback(async () => {
     if (!selectedTemplate) {
       toast({
         title: "Informações faltando",
@@ -113,15 +131,19 @@ const CreateEbook = () => {
       return;
     }
 
-    // Validate all chapters if imported
+    // Validate all chapters if imported (batch validation for performance)
     if (origin === "import" && parsedChapters.length > 0) {
-      for (const chapter of parsedChapters) {
-        const chapterValidation = chapterSchema.safeParse(chapter);
-        if (!chapterValidation.success) {
-          const firstError = chapterValidation.error.errors[0];
+      const invalidChapter = parsedChapters.find(chapter => {
+        const result = chapterSchema.safeParse(chapter);
+        return !result.success;
+      });
+      
+      if (invalidChapter) {
+        const result = chapterSchema.safeParse(invalidChapter);
+        if (!result.success) {
           toast({
             title: "Erro de validação no capítulo",
-            description: `${chapter.title}: ${firstError.message}`,
+            description: `${invalidChapter.title}: ${result.error.errors[0].message}`,
             variant: "destructive"
           });
           return;
@@ -203,7 +225,7 @@ const CreateEbook = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedTemplate, title, description, author, origin, parsedChapters, coverImage, selectedGenre, isFree, price, toast, navigate]);
   const handleFileUpload = async (file: File) => {
     setUploadedFile(file);
     setIsUploading(true);
@@ -307,21 +329,6 @@ const CreateEbook = () => {
       setStep("metadata");
     }
   };
-  const originOptions = [{
-    id: "blank" as const,
-    name: "Criar do Zero",
-    description: "Comece com um eBook em branco e crie seu conteúdo",
-    icon: BookOpen,
-    gradient: "from-[#70CBD4] to-[#69A1EB]",
-    recommended: true
-  }, {
-    id: "import" as const,
-    name: "Importar EPUB/PDF",
-    description: "Faça upload de um arquivo existente para converter",
-    icon: Upload,
-    gradient: "from-[#70CBD4] to-[#69A1EB]",
-    recommended: false
-  }];
   return <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-10">

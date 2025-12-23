@@ -1,12 +1,21 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-
+import { supabase } from "@/integrations/supabase/client";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Badge } from "@/components/ui/badge";
-import { Download, FileText, Calendar } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Download, FileText, Calendar, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { stripHtml } from "@/lib/utils";
+import { toast } from "sonner";
+import { exportToDOCX, exportToPDF } from "@/services/exportService";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface BookCardProps {
   id: string;
@@ -21,6 +30,7 @@ interface BookCardProps {
   formats?: string[];
   publishedAt?: string;
   rating?: number;
+  showDownload?: boolean;
 }
 
 export const BookCard = ({
@@ -36,13 +46,87 @@ export const BookCard = ({
   formats = ["PDF"],
   publishedAt,
   rating = 0,
+  showDownload = true,
 }: BookCardProps) => {
   const navigate = useNavigate();
   const [imageError, setImageError] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   const truncateText = (text: string, maxLength: number) => {
     if (text.length <= maxLength) return text;
     return text.substring(0, maxLength) + "...";
+  };
+
+  const handleDownload = async (e: React.MouseEvent, format: 'pdf' | 'docx') => {
+    e.stopPropagation();
+    e.preventDefault();
+    
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      toast.error("Faça login para baixar");
+      navigate("/auth");
+      return;
+    }
+
+    if (price && price > 0) {
+      toast.info("Este ebook é pago. Veja os detalhes para comprar.");
+      navigate(`/book/${id}`);
+      return;
+    }
+
+    setIsDownloading(true);
+    try {
+      // Fetch ebook data with chapters
+      const { data: ebook } = await supabase
+        .from("ebooks")
+        .select("*, chapters(title, content, chapter_order)")
+        .eq("id", id)
+        .single();
+
+      if (!ebook?.chapters || ebook.chapters.length === 0) {
+        toast.error("Este ebook não possui conteúdo para download");
+        setIsDownloading(false);
+        return;
+      }
+
+      // Sort chapters by order
+      const sortedChapters = [...ebook.chapters].sort((a, b) => a.chapter_order - b.chapter_order);
+
+      // Build content HTML
+      const contentHtml = sortedChapters.map(ch => 
+        `<h2>${stripHtml(ch.title)}</h2>${ch.content || ''}`
+      ).join('\n');
+
+      // Increment download count
+      await supabase
+        .from("ebooks")
+        .update({ downloads: (ebook.downloads || 0) + 1 })
+        .eq("id", id);
+
+      // Export based on format
+      if (format === 'pdf') {
+        await exportToPDF({
+          title: stripHtml(ebook.title),
+          author: ebook.author || author,
+          content: contentHtml,
+          hasCoverPage: false,
+        });
+      } else {
+        await exportToDOCX({
+          title: stripHtml(ebook.title),
+          author: ebook.author || author,
+          content: contentHtml,
+          hasCoverPage: false,
+        });
+      }
+
+      toast.success(`Download ${format.toUpperCase()} iniciado!`);
+    } catch (error) {
+      console.error("Download error:", error);
+      toast.error("Erro ao baixar ebook");
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   return (
@@ -68,6 +152,36 @@ export const BookCard = ({
             )}
             {price === 0 && (
               <Badge className="absolute top-2 right-2 bg-primary text-xs shadow-sm">Grátis</Badge>
+            )}
+            {/* Download button overlay */}
+            {showDownload && price === 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="icon"
+                    variant="secondary"
+                    className="absolute bottom-2 right-2 h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"
+                    onClick={(e) => e.stopPropagation()}
+                    disabled={isDownloading}
+                  >
+                    {isDownloading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                  <DropdownMenuItem onClick={(e) => handleDownload(e, 'pdf')}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    Download PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={(e) => handleDownload(e, 'docx')}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    Download DOCX
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
           </div>
           
@@ -128,13 +242,35 @@ export const BookCard = ({
             </div>
           </div>
 
-          {price !== undefined && (
-            <div className="pt-2 border-t">
-              <span className="font-bold text-lg text-primary">
-                {price === 0 ? "Grátis" : `${price.toFixed(2)} MT`}
-              </span>
-            </div>
-          )}
+          <div className="pt-2 border-t flex items-center justify-between">
+            <span className="font-bold text-lg text-primary">
+              {price === 0 ? "Grátis" : `${price?.toFixed(2)} MT`}
+            </span>
+            {showDownload && price === 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" disabled={isDownloading} onClick={(e) => e.stopPropagation()}>
+                    {isDownloading ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : (
+                      <Download className="h-4 w-4 mr-2" />
+                    )}
+                    Baixar
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                  <DropdownMenuItem onClick={(e) => handleDownload(e, 'pdf')}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    Download PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={(e) => handleDownload(e, 'docx')}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    Download DOCX
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
         </div>
       </HoverCardContent>
     </HoverCard>

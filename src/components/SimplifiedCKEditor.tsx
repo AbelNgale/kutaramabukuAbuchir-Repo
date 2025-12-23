@@ -17,7 +17,13 @@ import {
   Base64UploadAdapter,
   PasteFromOffice,
   BlockQuote,
-  GeneralHtmlSupport
+  GeneralHtmlSupport,
+  Image,
+  ImageInsert,
+  ImageResize,
+  ImageStyle,
+  ImageToolbar,
+  ImageCaption
 } from 'ckeditor5';
 import 'ckeditor5/ckeditor5.css';
 import { useRef } from 'react';
@@ -34,11 +40,17 @@ export default function SimplifiedCKEditor({ value, onChange }: SimplifiedCKEdit
   const editorConfiguration = {
     licenseKey: 'GPL',
     plugins: [
-      Essentials, Bold, Italic, Underline, Paragraph, Heading, Font, Alignment, List, Undo, Indent, IndentBlock, RemoveFormat, Base64UploadAdapter, PasteFromOffice, BlockQuote, GeneralHtmlSupport
+      Essentials, Bold, Italic, Underline, Paragraph, Heading, Font, Alignment, List, Undo, Indent, IndentBlock, RemoveFormat, Base64UploadAdapter, PasteFromOffice, BlockQuote, GeneralHtmlSupport, Image, ImageInsert, ImageResize, ImageStyle, ImageToolbar, ImageCaption
     ],
     toolbar: {
-      items: ['undo', 'redo', '|', 'heading', '|', 'fontSize', 'fontFamily', '|', 'bold', 'italic', 'underline', '|', 'alignment', '|', 'bulletedList', 'numberedList', '|', 'outdent', 'indent', '|', 'blockQuote', '|', 'removeFormat'],
+      items: ['undo', 'redo', '|', 'heading', '|', 'fontSize', 'fontFamily', '|', 'bold', 'italic', 'underline', '|', 'alignment', '|', 'bulletedList', 'numberedList', '|', 'outdent', 'indent', '|', 'blockQuote', '|', 'insertImage', '|', 'removeFormat'],
       shouldNotGroupWhenFull: true
+    },
+    image: {
+      toolbar: ['imageStyle:inline', 'imageStyle:block', 'imageStyle:side', '|', 'toggleImageCaption', 'imageTextAlternative'],
+      insert: {
+        type: 'auto' as const
+      }
     },
     heading: {
       options: [
