@@ -169,10 +169,77 @@ All colors MUST be HSL.
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
   padding: 1in;
   page-break-after: always;
+  position: relative;
+}
+
+/* Decorative page border */
+.a4-page::before {
+  content: '';
+  position: absolute;
+  top: 0.5in;
+  left: 0.5in;
+  right: 0.5in;
+  bottom: 0.5in;
+  border: 1px solid hsl(var(--border));
+  pointer-events: none;
+  opacity: 0.5;
 }
 
 .a4-page:last-child {
   margin-bottom: 0;
+}
+
+/* Page content wrapper with proper overflow */
+.page-content {
+  min-height: calc(11in - 2in);
+  overflow: visible;
+}
+
+/* Image handling in editor and preview */
+.a4-page img,
+.rich-text-content img,
+.content-section img,
+.ck-content img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 1em auto;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Ensure images don't break across pages */
+.a4-page figure,
+.rich-text-content figure {
+  page-break-inside: avoid;
+  break-inside: avoid;
+  margin: 1em 0;
+}
+
+/* Image captions */
+.a4-page figcaption,
+.rich-text-content figcaption {
+  text-align: center;
+  font-size: 0.85em;
+  color: hsl(var(--muted-foreground));
+  margin-top: 0.5em;
+  font-style: italic;
+}
+
+/* Page break utilities */
+.page-break-before {
+  page-break-before: always;
+  break-before: page;
+}
+
+.page-break-after {
+  page-break-after: always;
+  break-after: page;
+}
+
+.avoid-break {
+  page-break-inside: avoid;
+  break-inside: avoid;
 }
 
 .a4-page .ck-editor {
@@ -221,10 +288,6 @@ All colors MUST be HSL.
 }
 
 .ck.ck-balloon-panel {
-  display: none !important;
-}
-
-#lovable-badge {
   display: none !important;
 }
 

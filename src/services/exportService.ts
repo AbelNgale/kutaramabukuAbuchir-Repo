@@ -3,12 +3,14 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { saveAs } from 'file-saver';
 
-interface ExportOptions {
+export interface ExportOptions {
   title: string;
   author?: string | null;
   content: string;
   coverElement?: HTMLElement | null;
   hasCoverPage?: boolean;
+  coverImage?: string | null;
+  genre?: string | null;
 }
 
 interface ParsedElement {
@@ -26,6 +28,20 @@ interface ParsedRun {
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
+}
+
+// Sanitize text to remove HTML tags and normalize whitespace
+function sanitizeText(text: string): string {
+  return text
+    .replace(/<[^>]*>/g, '') // Remove HTML tags
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function parseHtmlContent(html: string): ParsedElement[] {
@@ -317,14 +333,122 @@ async function fetchImageAsArrayBuffer(src: string): Promise<{ data: ArrayBuffer
   }
 }
 
+// Create a programmatic cover page for DOCX when no HTML element is available
+async function createDocxCoverSection(options: ExportOptions): Promise<ISectionOptions | null> {
+  const { title, author, coverImage, genre } = options;
+  
+  const children: Paragraph[] = [];
+  
+  // If there's a cover image, try to use it as the background
+  if (coverImage) {
+    const imageData = await fetchImageAsArrayBuffer(coverImage);
+    if (imageData && imageData.data.byteLength > 0) {
+      // Scale image to fit page (8.5in x 11in at 96 DPI = 816 x 1056 pixels)
+      const pageWidthPx = 500; // Slightly smaller for margins
+      const pageHeightPx = 650;
+      
+      let widthPx = imageData.width;
+      let heightPx = imageData.height;
+      
+      // Scale to fit
+      const scaleW = pageWidthPx / widthPx;
+      const scaleH = pageHeightPx / heightPx;
+      const scale = Math.min(scaleW, scaleH);
+      
+      widthPx = Math.round(widthPx * scale);
+      heightPx = Math.round(heightPx * scale);
+      
+      try {
+        children.push(new Paragraph({
+          spacing: { before: 400, after: 200 }
+        }));
+        
+        children.push(new Paragraph({
+          children: [
+            new ImageRun({
+              data: new Uint8Array(imageData.data),
+              transformation: { width: widthPx, height: heightPx },
+              type: 'png',
+            }),
+          ],
+          alignment: AlignmentType.CENTER,
+          spacing: { before: 200, after: 400 }
+        }));
+      } catch (imgErr) {
+        console.error('Error adding cover image to DOCX:', imgErr);
+      }
+    }
+  }
+  
+  // Add genre if available
+  if (genre) {
+    children.push(new Paragraph({
+      children: [
+        new TextRun({
+          text: genre.toUpperCase(),
+          size: 20,
+          color: '666666',
+        })
+      ],
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 600, after: 200 }
+    }));
+  }
+  
+  // Add title
+  children.push(new Paragraph({
+    children: [
+      new TextRun({
+        text: sanitizeText(title),
+        bold: true,
+        size: 56,
+      })
+    ],
+    alignment: AlignmentType.CENTER,
+    spacing: { before: coverImage ? 200 : 2400, after: 400 }
+  }));
+  
+  // Add author
+  if (author) {
+    children.push(new Paragraph({
+      children: [
+        new TextRun({
+          text: `por ${sanitizeText(author)}`,
+          italics: true,
+          size: 28,
+          color: '555555',
+        })
+      ],
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 200, after: 600 }
+    }));
+  }
+  
+  // Add page break
+  children.push(new Paragraph({
+    children: [new PageBreak()]
+  }));
+  
+  return {
+    properties: {
+      page: {
+        margin: { top: 720, right: 720, bottom: 720, left: 720 }
+      }
+    },
+    children
+  };
+}
+
 export async function exportToDOCX(options: ExportOptions): Promise<void> {
-  const { title, author, content, coverElement, hasCoverPage = true } = options;
+  const { title, author, content, coverElement, hasCoverPage = true, coverImage, genre } = options;
   
   const parsedContent = parseHtmlContent(content);
   
   const sections: ISectionOptions[] = [];
   
-  // Add cover as a separate section with zero margins if available
+  // Try to add cover as a captured HTML element first
+  let coverAdded = false;
+  
   if (coverElement && coverElement.offsetWidth > 0 && coverElement.offsetHeight > 0) {
     try {
       await waitForImages(coverElement);
@@ -336,7 +460,7 @@ export async function exportToDOCX(options: ExportOptions): Promise<void> {
         backgroundColor: '#ffffff',
         logging: false,
         imageTimeout: 5000,
-        onclone: (clonedDoc, clonedElement) => {
+        onclone: (_clonedDoc, clonedElement) => {
           clonedElement.style.width = '8.5in';
           clonedElement.style.height = '11in';
         }
@@ -383,19 +507,36 @@ export async function exportToDOCX(options: ExportOptions): Promise<void> {
             }),
           ]
         });
+        
+        coverAdded = true;
       }
     } catch (err) {
       console.error('Cover capture error for DOCX:', err);
     }
   }
   
+  // If no HTML cover was captured but we should have a cover, create one programmatically
+  if (!coverAdded && hasCoverPage) {
+    const programmaticCover = await createDocxCoverSection({ ...options, coverImage, genre });
+    if (programmaticCover) {
+      sections.push(programmaticCover);
+      coverAdded = true;
+    }
+  }
+  
   // Content section with normal margins
   const contentChildren: Paragraph[] = [];
   
-  // Only add title page if no cover
-  if (sections.length === 0 && !hasCoverPage) {
+  // Only add title page if no cover was added
+  if (!coverAdded) {
     contentChildren.push(new Paragraph({
-      text: title,
+      children: [
+        new TextRun({
+          text: sanitizeText(title),
+          bold: true,
+          size: 48
+        })
+      ],
       heading: HeadingLevel.TITLE,
       alignment: AlignmentType.CENTER,
       spacing: { before: 600, after: 200 }
@@ -403,7 +544,7 @@ export async function exportToDOCX(options: ExportOptions): Promise<void> {
     
     if (author) {
       contentChildren.push(new Paragraph({
-        children: [new TextRun({ text: `por ${author}`, italics: true, size: 28 })],
+        children: [new TextRun({ text: `por ${sanitizeText(author)}`, italics: true, size: 28 })],
         alignment: AlignmentType.CENTER,
         spacing: { after: 600 }
       }));
@@ -531,12 +672,12 @@ export async function exportToDOCX(options: ExportOptions): Promise<void> {
   const doc = new Document({ sections });
   
   const blob = await Packer.toBlob(doc);
-  const safeTitle = title.replace(/[<>:"/\\|?*]/g, '').trim() || 'ebook';
+  const safeTitle = sanitizeText(title).replace(/[<>:"/\\|?*]/g, '').trim() || 'ebook';
   saveAs(blob, `${safeTitle}.docx`);
 }
 
 export async function exportToPDF(options: ExportOptions): Promise<void> {
-  const { title, author, content, coverElement, hasCoverPage = true } = options;
+  const { title, author, content, coverElement, hasCoverPage = true, coverImage, genre } = options;
   
   const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
   const pageWidth = pdf.internal.pageSize.getWidth();
@@ -548,7 +689,7 @@ export async function exportToPDF(options: ExportOptions): Promise<void> {
   
   let hasCover = false;
   
-  // Add cover if available
+  // Try to add cover from HTML element first
   if (coverElement && coverElement.offsetWidth > 0 && coverElement.offsetHeight > 0) {
     try {
       await waitForImages(coverElement);
@@ -560,7 +701,7 @@ export async function exportToPDF(options: ExportOptions): Promise<void> {
         backgroundColor: '#ffffff',
         logging: false,
         imageTimeout: 5000,
-        onclone: (clonedDoc, clonedElement) => {
+        onclone: (_clonedDoc, clonedElement) => {
           clonedElement.style.width = '8.5in';
           clonedElement.style.height = '11in';
         }
@@ -576,20 +717,102 @@ export async function exportToPDF(options: ExportOptions): Promise<void> {
     }
   }
   
+  // If no HTML cover was captured but we should have a cover, create one programmatically
+  if (!hasCover && hasCoverPage) {
+    let yPos = 100;
+    
+    // Add cover image if available
+    if (coverImage) {
+      try {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        
+        await new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject(new Error('Cover image load failed'));
+          setTimeout(() => reject(new Error('Timeout')), 5000);
+          img.src = coverImage;
+        });
+        
+        // Calculate dimensions to fit on page (leaving space for title)
+        let imgWidth = img.naturalWidth || img.width;
+        let imgHeight = img.naturalHeight || img.height;
+        const maxImgWidth = contentWidth;
+        const maxImgHeight = pageHeight * 0.5; // Use half the page for image
+        
+        const scaleW = maxImgWidth / imgWidth;
+        const scaleH = maxImgHeight / imgHeight;
+        const scale = Math.min(scaleW, scaleH, 1);
+        
+        imgWidth = imgWidth * scale;
+        imgHeight = imgHeight * scale;
+        
+        const imgX = (pageWidth - imgWidth) / 2;
+        
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || img.width;
+        canvas.height = img.naturalHeight || img.height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          pdf.addImage(canvas.toDataURL('image/jpeg', 0.9), 'JPEG', imgX, yPos, imgWidth, imgHeight);
+          yPos += imgHeight + 40;
+        }
+      } catch (err) {
+        console.error('Cover image error:', err);
+        yPos = margin + 150;
+      }
+    } else {
+      yPos = margin + 150;
+    }
+    
+    // Add genre if available
+    if (genre) {
+      pdf.setFontSize(12);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setTextColor(100, 100, 100);
+      pdf.text(genre.toUpperCase(), pageWidth / 2, yPos, { align: 'center' });
+      yPos += 40;
+    }
+    
+    // Add title
+    pdf.setFontSize(28);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setTextColor(0, 0, 0);
+    const titleLines = pdf.splitTextToSize(sanitizeText(title), contentWidth);
+    pdf.text(titleLines, pageWidth / 2, yPos, { align: 'center' });
+    yPos += titleLines.length * 35 + 30;
+    
+    // Add author
+    if (author) {
+      pdf.setFontSize(16);
+      pdf.setFont('helvetica', 'italic');
+      pdf.setTextColor(80, 80, 80);
+      pdf.text(`por ${sanitizeText(author)}`, pageWidth / 2, yPos, { align: 'center' });
+    }
+    
+    hasCover = true;
+    pdf.addPage();
+  }
+  
+  // Reset text color for content
+  pdf.setTextColor(0, 0, 0);
+  
   let yPos = margin;
   
+  // If no cover at all, add title page
   if (!hasCover) {
     yPos = margin + 150;
     pdf.setFontSize(28);
     pdf.setFont('helvetica', 'bold');
-    const titleLines = pdf.splitTextToSize(title, contentWidth);
+    const titleLines = pdf.splitTextToSize(sanitizeText(title), contentWidth);
     pdf.text(titleLines, pageWidth / 2, yPos, { align: 'center' });
     yPos += titleLines.length * 35 + 50;
     
     if (author) {
       pdf.setFontSize(16);
       pdf.setFont('helvetica', 'italic');
-      pdf.text(`por ${author}`, pageWidth / 2, yPos, { align: 'center' });
+      pdf.text(`por ${sanitizeText(author)}`, pageWidth / 2, yPos, { align: 'center' });
     }
     
     pdf.addPage();
@@ -760,6 +983,6 @@ export async function exportToPDF(options: ExportOptions): Promise<void> {
     yPos += spacingAfter;
   }
   
-  const safeTitle = title.replace(/[<>:"/\\|?*]/g, '').trim() || 'ebook';
+  const safeTitle = sanitizeText(title).replace(/[<>:"/\\|?*]/g, '').trim() || 'ebook';
   pdf.save(`${safeTitle}.pdf`);
 }

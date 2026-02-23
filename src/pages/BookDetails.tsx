@@ -13,7 +13,9 @@ import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { BookCard } from "@/components/BookCard";
 import BottomNav from "@/components/BottomNav";
-import { stripHtml } from "@/lib/utils";
+import CoverPreview from "@/components/CoverPreview";
+import { CoverTemplate } from "@/components/templates/covers";
+import { stripHtml, sanitizeHtml } from "@/lib/utils";
 interface Ebook {
   id: string;
   title: string;
@@ -29,6 +31,7 @@ interface Ebook {
   downloads?: number;
   preview_content?: string;
   user_id: string;
+  template_id?: string;
 }
 interface Review {
   id: string;
@@ -223,6 +226,126 @@ export default function BookDetails() {
         return sorted;
     }
   };
+
+  const handleDownloadFreeBook = async () => {
+    if (!book || book.price !== 0) {
+      toast.error("Este livro não é gratuito");
+      return;
+    }
+
+    try {
+      toast.info("Preparando download...");
+      
+      const htmlToText = (html: string) => {
+        const temp = document.createElement('div');
+        temp.innerHTML = html;
+        return temp.textContent || temp.innerText || '';
+      };
+
+      const { data: chapters } = await supabase
+        .from("chapters")
+        .select("*")
+        .eq("ebook_id", book.id)
+        .order("chapter_order", { ascending: true });
+
+      const { jsPDF } = await import("jspdf");
+      const pdf = new jsPDF();
+      let yPosition = 20;
+
+      // Cover page with image
+      if (book.cover_image) {
+        try {
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.src = book.cover_image;
+          await new Promise<void>((resolve, reject) => {
+            img.onload = () => resolve();
+            img.onerror = () => reject();
+          });
+
+          const pageWidth = pdf.internal.pageSize.getWidth();
+          const pageHeight = pdf.internal.pageSize.getHeight();
+          const imgRatio = img.width / img.height;
+          const pageRatio = pageWidth / pageHeight;
+          let finalWidth, finalHeight, xOffset, yOffset;
+          
+          if (imgRatio > pageRatio) {
+            finalHeight = pageHeight;
+            finalWidth = finalHeight * imgRatio;
+            xOffset = (pageWidth - finalWidth) / 2;
+            yOffset = 0;
+          } else {
+            finalWidth = pageWidth;
+            finalHeight = finalWidth / imgRatio;
+            xOffset = 0;
+            yOffset = (pageHeight - finalHeight) / 2;
+          }
+          pdf.addImage(img, 'JPEG', xOffset, yOffset, finalWidth, finalHeight);
+        } catch (error) {
+          console.error('Erro ao adicionar capa ao PDF:', error);
+        }
+      }
+
+      // Title page
+      pdf.addPage();
+      yPosition = 20;
+      pdf.setFontSize(24);
+      const titleText = htmlToText(book.title);
+      const titleLines = pdf.splitTextToSize(titleText, 170);
+      pdf.text(titleLines, 20, yPosition);
+      yPosition += titleLines.length * 12 + 20;
+      
+      if (book.author) {
+        pdf.setFontSize(14);
+        pdf.text(`Escrito por ${book.author}`, 20, yPosition);
+      }
+
+      // Description page
+      if (book.description) {
+        pdf.addPage();
+        yPosition = 20;
+        pdf.setFontSize(12);
+        const descText = htmlToText(book.description);
+        const descLines = pdf.splitTextToSize(descText, 170);
+        pdf.text(descLines, 20, yPosition);
+      }
+
+      // Chapters
+      chapters?.forEach(chapter => {
+        pdf.addPage();
+        yPosition = 20;
+        pdf.setFontSize(18);
+        const chapterTitle = htmlToText(chapter.title);
+        pdf.text(chapterTitle, 20, yPosition);
+        yPosition += 15;
+        pdf.setFontSize(12);
+        const plainText = htmlToText(chapter.content);
+        const contentLines = pdf.splitTextToSize(plainText, 170);
+        contentLines.forEach((line: string) => {
+          if (yPosition > 280) {
+            pdf.addPage();
+            yPosition = 20;
+          }
+          pdf.text(line, 20, yPosition);
+          yPosition += 7;
+        });
+      });
+
+      pdf.save(`${htmlToText(book.title)}.pdf`);
+
+      // Update download count
+      await supabase
+        .from("ebooks")
+        .update({ downloads: (book.downloads || 0) + 1 })
+        .eq("id", book.id);
+
+      toast.success("Download concluído!");
+    } catch (error) {
+      console.error("Error downloading ebook:", error);
+      toast.error("Erro ao baixar o ebook");
+    }
+  };
+
   const submitReview = async () => {
     const {
       data: {
@@ -278,12 +401,46 @@ export default function BookDetails() {
           {/* Left - Book Cover */}
           <Dialog>
             <DialogTrigger asChild>
-              <div className="bg-muted flex items-center justify-center w-36 h-60 rounded-lg overflow-hidden mx-auto md:mx-0 cursor-pointer hover:opacity-90 transition-opacity">
-                {book.cover_image ? <img src={book.cover_image} alt={book.title} className="object-cover w-full h-full border border-border rounded-lg" /> : <FileText className="h-20 w-20 text-muted-foreground" />}
+              <div className="w-36 h-52 rounded-lg overflow-hidden mx-auto md:mx-0 cursor-pointer hover:opacity-90 transition-opacity shadow-md border border-border">
+                {book.template_id && book.template_id !== 'none' ? (
+                  <div className="w-full h-full" style={{ transform: 'scale(0.132)', transformOrigin: 'top left', width: '8.5in', height: '11in' }}>
+                    <CoverPreview
+                      template={(book.template_id as CoverTemplate) || 'classic'}
+                      title={stripHtml(book.title)}
+                      author={book.author}
+                      coverImage={book.cover_image}
+                      genre={book.genre}
+                    />
+                  </div>
+                ) : book.cover_image ? (
+                  <img src={book.cover_image} alt={book.title} className="object-cover w-full h-full" />
+                ) : (
+                  <div className="w-full h-full bg-gradient-primary flex items-center justify-center">
+                    <FileText className="h-12 w-12 text-white" />
+                  </div>
+                )}
               </div>
             </DialogTrigger>
             <DialogContent className="max-w-md">
-              <img src={book.cover_image} alt={book.title} className="w-full h-auto rounded-lg" />
+              {book.template_id && book.template_id !== 'none' ? (
+                <div className="w-full overflow-hidden rounded-lg" style={{ maxHeight: '80vh' }}>
+                  <div style={{ transform: 'scale(0.45)', transformOrigin: 'top left', width: '8.5in', height: '11in' }}>
+                    <CoverPreview
+                      template={(book.template_id as CoverTemplate) || 'classic'}
+                      title={stripHtml(book.title)}
+                      author={book.author}
+                      coverImage={book.cover_image}
+                      genre={book.genre}
+                    />
+                  </div>
+                </div>
+              ) : book.cover_image ? (
+                <img src={book.cover_image} alt={book.title} className="w-full h-auto rounded-lg" />
+              ) : (
+                <div className="w-full aspect-[2/3] bg-gradient-primary flex items-center justify-center rounded-lg">
+                  <FileText className="h-20 w-20 text-white" />
+                </div>
+              )}
             </DialogContent>
           </Dialog>
 
@@ -325,7 +482,13 @@ export default function BookDetails() {
 
             {/* Action Buttons */}
             <div className="flex flex-col sm:flex-row gap-3">
-              <Button size="lg" className="flex-1 py-[8px]">
+              <Button 
+                size="lg" 
+                className="flex-1 py-[8px]"
+                onClick={book.price === 0 ? handleDownloadFreeBook : undefined}
+                disabled={book.price !== 0}
+              >
+                <Download className="h-4 w-4 mr-2" />
                 {book.price === 0 ? "Baixar Grátis" : `Comprar - ${book.price?.toFixed(2)} MZN`}
               </Button>
               <Button variant="outline" size="lg" onClick={toggleWishlist} className="flex-1 py-[8px]">
@@ -341,7 +504,7 @@ export default function BookDetails() {
           <div>
             <h2 className="text-2xl font-bold mb-4">Descrição</h2>
             <div className="text-muted-foreground leading-relaxed text-justify" dangerouslySetInnerHTML={{
-            __html: book.description || "Sem descrição disponível"
+            __html: sanitizeHtml(book.description || "Sem descrição disponível")
           }} />
           </div>
 
@@ -386,8 +549,8 @@ export default function BookDetails() {
           {authorBooks.length > 0 && <div>
               <Separator className="my-6" />
               <h2 className="text-2xl font-bold mb-4">Mais do Autor</h2>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {authorBooks.map(authorBook => <BookCard key={authorBook.id} id={authorBook.id} title={authorBook.title} author={authorBook.author || ""} coverImage={authorBook.cover_image} genre={authorBook.genre} price={authorBook.price} rating={authorBook.rating} />)}
+              <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-thin">
+                {authorBooks.map(authorBook => <BookCard key={authorBook.id} id={authorBook.id} title={authorBook.title} author={authorBook.author || ""} coverImage={authorBook.cover_image} genre={authorBook.genre} price={authorBook.price} rating={authorBook.rating} templateId={authorBook.template_id} />)}
               </div>
             </div>}
 
@@ -395,8 +558,8 @@ export default function BookDetails() {
           {similarBooks.length > 0 && <div>
               <Separator className="my-6" />
               <h2 className="text-2xl font-bold mb-4">Livros Semelhantes</h2>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {similarBooks.map(similarBook => <BookCard key={similarBook.id} id={similarBook.id} title={similarBook.title} author={similarBook.author || ""} coverImage={similarBook.cover_image} genre={similarBook.genre} price={similarBook.price} rating={similarBook.rating} />)}
+              <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-thin">
+                {similarBooks.map(similarBook => <BookCard key={similarBook.id} id={similarBook.id} title={similarBook.title} author={similarBook.author || ""} coverImage={similarBook.cover_image} genre={similarBook.genre} price={similarBook.price} rating={similarBook.rating} templateId={similarBook.template_id} />)}
               </div>
             </div>}
 

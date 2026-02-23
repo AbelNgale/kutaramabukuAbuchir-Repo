@@ -33,6 +33,7 @@ interface Ebook {
   preview_content?: string;
   user_id: string;
   created_at?: string;
+  template_id?: string;
 }
 interface Profile {
   id: string;
@@ -63,11 +64,11 @@ const Discover = () => {
     fetchGenres();
     fetchCurrentUser();
   }, []);
-  
-  // Fetch books immediately, and refetch when user auth changes
   useEffect(() => {
-    fetchBooks();
-    fetchProfiles();
+    if (currentUserId !== null) {
+      fetchBooks();
+      fetchProfiles();
+    }
   }, [currentUserId]);
   useEffect(() => {
     applyFilters();
@@ -89,17 +90,11 @@ const Discover = () => {
   };
   const fetchBooks = async () => {
     setLoading(true);
-    let query = supabase.from("ebooks").select("*");
-    
-    // If user is logged in, show public books OR their own books
-    // If not logged in, show only public books
-    if (currentUserId) {
-      query = query.or(`is_public.eq.true,user_id.eq.${currentUserId}`);
-    } else {
-      query = query.eq("is_public", true);
-    }
-    
-    const { data } = await query.order("created_at", { ascending: false });
+    const {
+      data
+    } = await supabase.from("ebooks").select("*").or(`is_public.eq.true,user_id.eq.${currentUserId}`).order("created_at", {
+      ascending: false
+    });
     if (data) {
       setBooks(data);
     }
@@ -108,15 +103,19 @@ const Discover = () => {
   const fetchProfiles = async () => {
     const {
       data
-    } = await supabase.from("profiles").select("id, full_name, username, avatar_url, bio").neq("id", currentUserId).order("full_name");
+    } = await supabase.from("profiles_public").select("id, full_name, username, avatar_url, bio").neq("id", currentUserId).order("full_name");
     if (data) {
-      setProfiles(data);
+      setProfiles(data as Profile[]);
     }
   };
   const applyProfileFilters = () => {
     let filtered = [...profiles];
     if (searchQuery) {
-      filtered = filtered.filter(profile => profile.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) || profile.username?.toLowerCase().includes(searchQuery.toLowerCase()));
+      filtered = filtered.filter(profile => 
+        profile.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+        profile.username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        profile.bio?.toLowerCase().includes(searchQuery.toLowerCase())
+      );
     }
     setFilteredProfiles(filtered);
   };
@@ -268,22 +267,22 @@ const Discover = () => {
           </div>
         </div>
 
-        {/* Tabs with underline style - only show when searching */}
-        {searchQuery && <div className="mb-8">
-            <div className="flex gap-8 border-b">
-              <button onClick={() => setActiveTab("books")} className={`pb-3 px-2 text-lg font-medium transition-colors relative ${activeTab === "books" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-                Livros
-                {activeTab === "books" && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
-              </button>
-              <button onClick={() => setActiveTab("profiles")} className={`pb-3 px-2 text-lg font-medium transition-colors relative ${activeTab === "profiles" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-                Perfis
-                {activeTab === "profiles" && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
-              </button>
-            </div>
-          </div>}
+        {/* Tabs with underline style */}
+        <div className="mb-8">
+          <div className="flex gap-8 border-b">
+            <button onClick={() => setActiveTab("books")} className={`pb-3 px-2 text-lg font-medium transition-colors relative ${activeTab === "books" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+              Livros
+              {activeTab === "books" && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+            </button>
+            <button onClick={() => setActiveTab("profiles")} className={`pb-3 px-2 text-lg font-medium transition-colors relative ${activeTab === "profiles" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+              Perfis
+              {activeTab === "profiles" && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+            </button>
+          </div>
+        </div>
 
         {/* Books Content */}
-        {(activeTab === "books" || !searchQuery) && <>
+        {activeTab === "books" && <>
             <div className="flex items-center gap-2 text-sm text-muted-foreground mb-6">
               <span className="font-medium">{filteredBooks.length}</span>
               <span>{filteredBooks.length === 1 ? "livro encontrado" : "livros encontrados"}</span>
@@ -298,12 +297,12 @@ const Discover = () => {
                   Tente ajustar os filtros ou pesquisa
                 </p>
               </div> : <div className="flex flex-wrap gap-4 justify-start">
-                {filteredBooks.map(book => <BookCard key={book.id} id={book.id} title={book.title} author={book.author || "Autor Desconhecido"} coverImage={book.cover_image} description={book.description} genre={book.genre} price={book.price} downloads={book.downloads} pages={book.pages} formats={book.formats} publishedAt={book.published_at} rating={book.rating} />)}
+                {filteredBooks.map(book => <BookCard key={book.id} id={book.id} title={book.title} author={book.author || "Autor Desconhecido"} coverImage={book.cover_image} description={book.description} genre={book.genre} price={book.price} downloads={book.downloads} pages={book.pages} formats={book.formats} publishedAt={book.published_at} rating={book.rating} templateId={book.template_id} />)}
               </div>}
           </>}
 
         {/* Profiles Content */}
-        {searchQuery && activeTab === "profiles" && <>
+        {activeTab === "profiles" && <>
             <div className="mb-6">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <span className="font-medium">{filteredProfiles.length}</span>

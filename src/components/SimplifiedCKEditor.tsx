@@ -14,19 +14,10 @@ import {
   Indent,
   IndentBlock,
   RemoveFormat,
-  Base64UploadAdapter,
-  PasteFromOffice,
-  BlockQuote,
-  GeneralHtmlSupport,
-  Image,
-  ImageInsert,
-  ImageResize,
-  ImageStyle,
-  ImageToolbar,
-  ImageCaption
+  Base64UploadAdapter
 } from 'ckeditor5';
 import 'ckeditor5/ckeditor5.css';
-import { useRef } from 'react';
+import { useRef, useEffect } from 'react';
 
 interface SimplifiedCKEditorProps {
   value: string;
@@ -40,17 +31,40 @@ export default function SimplifiedCKEditor({ value, onChange }: SimplifiedCKEdit
   const editorConfiguration = {
     licenseKey: 'GPL',
     plugins: [
-      Essentials, Bold, Italic, Underline, Paragraph, Heading, Font, Alignment, List, Undo, Indent, IndentBlock, RemoveFormat, Base64UploadAdapter, PasteFromOffice, BlockQuote, GeneralHtmlSupport, Image, ImageInsert, ImageResize, ImageStyle, ImageToolbar, ImageCaption
+      Essentials,
+      Bold,
+      Italic,
+      Underline,
+      Paragraph,
+      Heading,
+      Font,
+      Alignment,
+      List,
+      Undo,
+      Indent,
+      IndentBlock,
+      RemoveFormat,
+      Base64UploadAdapter
     ],
     toolbar: {
-      items: ['undo', 'redo', '|', 'heading', '|', 'fontSize', 'fontFamily', '|', 'bold', 'italic', 'underline', '|', 'alignment', '|', 'bulletedList', 'numberedList', '|', 'outdent', 'indent', '|', 'blockQuote', '|', 'insertImage', '|', 'removeFormat'],
+      items: [
+        'undo', 'redo',
+        '|',
+        'heading',
+        '|',
+        'fontSize', 'fontFamily',
+        '|',
+        'bold', 'italic', 'underline',
+        '|',
+        'alignment',
+        '|',
+        'bulletedList', 'numberedList',
+        '|',
+        'outdent', 'indent',
+        '|',
+        'removeFormat'
+      ],
       shouldNotGroupWhenFull: true
-    },
-    image: {
-      toolbar: ['imageStyle:inline', 'imageStyle:block', 'imageStyle:side', '|', 'toggleImageCaption', 'imageTextAlternative'],
-      insert: {
-        type: 'auto' as const
-      }
     },
     heading: {
       options: [
@@ -60,43 +74,51 @@ export default function SimplifiedCKEditor({ value, onChange }: SimplifiedCKEdit
         { model: 'heading3' as const, view: 'h3', title: 'Título 3', class: 'ck-heading3' }
       ]
     },
-    fontSize: { options: [10, 11, 12, 14, 16, 18, 20, 24], supportAllValues: true },
-    fontFamily: { options: ['default', 'Arial, Helvetica, sans-serif', 'Times New Roman, Times, serif', 'Georgia, serif', 'Verdana, Geneva, sans-serif'], supportAllValues: true },
-    placeholder: 'Digite o conteúdo aqui...',
-    initialData: value,
-    // Configuração para preservar formatação ao colar
-    htmlSupport: {
-      allow: [
-        { 
-          name: /.*/, 
-          attributes: /^(style|class|id|href|src|alt|target|rel)$/,
-          classes: /.*/,
-          styles: /.*/ 
-        }
+    fontSize: {
+      options: [10, 11, 12, 14, 16, 18, 20, 24],
+      supportAllValues: true
+    },
+    fontFamily: {
+      options: [
+        'default',
+        'Arial, Helvetica, sans-serif',
+        'Times New Roman, Times, serif',
+        'Georgia, serif',
+        'Verdana, Geneva, sans-serif'
       ],
-      disallow: [
-        { name: /^(script|iframe|object|embed|form|input|button)$/ }
-      ]
-    }
+      supportAllValues: true
+    },
+    placeholder: 'Digite o conteúdo aqui...',
+    initialData: value
   };
 
   return (
-    <div className="flex flex-col h-full w-full">
-      <div ref={toolbarRef} className="border-b border-border bg-muted sticky top-0 z-10 flex-shrink-0" style={{ minHeight: '40px' }} />
-      <div className="flex-1 overflow-hidden" style={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        <CKEditor
-          editor={DecoupledEditor}
-          config={editorConfiguration}
-          data={value}
-          onReady={(editor) => {
-            if (toolbarRef.current) {
-              toolbarRef.current.innerHTML = '';
-              toolbarRef.current.appendChild(editor.ui.view.toolbar.element!);
-            }
-            editorRef.current = editor;
-          }}
-          onChange={(event, editor) => onChange(editor.getData())}
-        />
+    <div className="flex flex-col h-full">
+      {/* Toolbar Section - Separated for independent modification */}
+      <div 
+        ref={toolbarRef} 
+        className="border-b border-border bg-background sticky top-0 z-10"
+      />
+      
+      {/* A4 Pages Section - Separated for independent modification */}
+      <div className="a4-editor-wrapper flex-1 overflow-auto">
+        <div className="a4-page">
+          <CKEditor
+            editor={DecoupledEditor}
+            config={editorConfiguration}
+            data={value}
+            onReady={(editor) => {
+              if (toolbarRef.current) {
+                toolbarRef.current.appendChild(editor.ui.view.toolbar.element!);
+              }
+              editorRef.current = editor;
+            }}
+            onChange={(event, editor) => {
+              const data = editor.getData();
+              onChange(data);
+            }}
+          />
+        </div>
       </div>
     </div>
   );

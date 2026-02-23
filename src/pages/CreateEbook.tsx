@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTheme } from "next-themes";
 import { supabase } from "@/integrations/supabase/client";
@@ -10,10 +10,19 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, BookOpen, Upload, Sparkles, Type, Image, Minus, FileText, ArrowRight, Check, X, Loader2 } from "lucide-react";
+import { ArrowLeft, BookOpen, Upload, Sparkles, Type, Image, Minus, FileText, ArrowRight, Check, X } from "lucide-react";
 import logo from "@/assets/logo-new.png";
 import { EBOOK_TEMPLATES } from "@/components/templates/ebooks";
 import { ebookSchema, chapterSchema } from "@/lib/validations";
+import AuthorInput from "@/components/AuthorInput";
+
+interface Author {
+  id: string;
+  name: string;
+  userId?: string;
+  status?: 'pending' | 'accepted' | 'rejected';
+  isNew?: boolean;
+}
 type WizardStep = "origin" | "upload" | "mapping" | "metadata" | "template" | "complete";
 type OriginType = "blank" | "import";
 interface ParsedChapter {
@@ -27,7 +36,7 @@ const CreateEbook = () => {
   const [origin, setOrigin] = useState<OriginType | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   const [title, setTitle] = useState("");
-  const [author, setAuthor] = useState("");
+  const [authors, setAuthors] = useState<Author[]>([]);
   const [description, setDescription] = useState("");
   const [coverImage, setCoverImage] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -49,24 +58,6 @@ const CreateEbook = () => {
   const {
     theme
   } = useTheme();
-
-  // Memoized origin options to prevent re-renders
-  const originOptions = useMemo(() => [{
-    id: "blank" as const,
-    name: "Criar do Zero",
-    description: "Comece com um eBook em branco e crie seu conteúdo",
-    icon: BookOpen,
-    gradient: "from-[#70CBD4] to-[#69A1EB]",
-    recommended: true
-  }, {
-    id: "import" as const,
-    name: "Importar EPUB/PDF",
-    description: "Faça upload de um arquivo existente para converter",
-    icon: Upload,
-    gradient: "from-[#70CBD4] to-[#69A1EB]",
-    recommended: false
-  }], []);
-
   useEffect(() => {
     checkUser();
     loadUserProfile();
@@ -101,11 +92,17 @@ const CreateEbook = () => {
         data: profile
       } = await supabase.from("profiles").select("full_name").eq("id", session.user.id).single();
       if (profile?.full_name) {
-        setAuthor(profile.full_name);
+        // Add current user as author with their userId for proper tracking
+        setAuthors([{ 
+          id: crypto.randomUUID(), 
+          name: profile.full_name,
+          userId: session.user.id,
+          status: 'accepted'
+        }]);
       }
     }
   };
-  const handleCreateEbook = useCallback(async () => {
+  const handleCreateEbook = async () => {
     if (!selectedTemplate) {
       toast({
         title: "Informações faltando",
@@ -116,10 +113,11 @@ const CreateEbook = () => {
     }
 
     // Validate ebook metadata
+    const authorNames = authors.map(a => a.name).join(', ');
     const validationResult = ebookSchema.safeParse({
       title,
       description,
-      author
+      author: authorNames
     });
     if (!validationResult.success) {
       const firstError = validationResult.error.errors[0];
@@ -131,19 +129,15 @@ const CreateEbook = () => {
       return;
     }
 
-    // Validate all chapters if imported (batch validation for performance)
+    // Validate all chapters if imported
     if (origin === "import" && parsedChapters.length > 0) {
-      const invalidChapter = parsedChapters.find(chapter => {
-        const result = chapterSchema.safeParse(chapter);
-        return !result.success;
-      });
-      
-      if (invalidChapter) {
-        const result = chapterSchema.safeParse(invalidChapter);
-        if (!result.success) {
+      for (const chapter of parsedChapters) {
+        const chapterValidation = chapterSchema.safeParse(chapter);
+        if (!chapterValidation.success) {
+          const firstError = chapterValidation.error.errors[0];
           toast({
             title: "Erro de validação no capítulo",
-            description: `${invalidChapter.title}: ${result.error.errors[0].message}`,
+            description: `${chapter.title}: ${firstError.message}`,
             variant: "destructive"
           });
           return;
@@ -186,7 +180,7 @@ const CreateEbook = () => {
         user_id: session.user.id,
         title,
         description,
-        author,
+        author: authors.map(a => a.name).join(', '),
         type: "standard",
         template_id: selectedTemplate,
         cover_image: coverImageUrl,
@@ -209,9 +203,46 @@ const CreateEbook = () => {
         } = await supabase.from("chapters").insert(chaptersToInsert);
         if (chaptersError) throw chaptersError;
       }
+
+      // Create book_authors entries and notifications for collaborators
+      for (const author of authors) {
+        if (author.userId) {
+          const isCurrentUser = author.userId === session.user.id;
+          
+          // Add to book_authors table - if current user, auto-accept and mark as primary
+          const { data: bookAuthor, error: bookAuthorError } = await supabase
+            .from("book_authors")
+            .insert({
+              ebook_id: ebook.id,
+              user_id: author.userId,
+              status: isCurrentUser ? 'accepted' : 'pending',
+              is_primary: isCurrentUser
+            })
+            .select()
+            .single();
+
+          // Only create notification for other users, not for self
+          if (!bookAuthorError && bookAuthor && !isCurrentUser) {
+            await supabase.from("notifications").insert({
+              user_id: author.userId,
+              type: 'collaboration_request',
+              title: 'Convite de Colaboração',
+              message: `Você foi adicionado como autor do livro "${title}". Aceite ou rejeite o convite.`,
+              data: { 
+                ebook_id: ebook.id, 
+                book_author_id: bookAuthor.id,
+                ebook_title: title 
+              }
+            });
+          }
+        }
+      }
+
       toast({
         title: "Ebook criado!",
-        description: "Redirecionando para o editor..."
+        description: authors.some(a => a.userId) 
+          ? "Convites de colaboração enviados. Redirecionando para o editor..."
+          : "Redirecionando para o editor..."
       });
 
       // Redirect to editor
@@ -225,7 +256,7 @@ const CreateEbook = () => {
     } finally {
       setLoading(false);
     }
-  }, [selectedTemplate, title, description, author, origin, parsedChapters, coverImage, selectedGenre, isFree, price, toast, navigate]);
+  };
   const handleFileUpload = async (file: File) => {
     setUploadedFile(file);
     setIsUploading(true);
@@ -329,6 +360,21 @@ const CreateEbook = () => {
       setStep("metadata");
     }
   };
+  const originOptions = [{
+    id: "blank" as const,
+    name: "Criar do Zero",
+    description: "Comece com um eBook em branco e crie seu conteúdo",
+    icon: BookOpen,
+    gradient: "from-[#70CBD4] to-[#69A1EB]",
+    recommended: true
+  }, {
+    id: "import" as const,
+    name: "Importar EPUB/PDF",
+    description: "Faça upload de um arquivo existente para converter",
+    icon: Upload,
+    gradient: "from-[#70CBD4] to-[#69A1EB]",
+    recommended: false
+  }];
   return <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-10">
@@ -489,8 +535,11 @@ const CreateEbook = () => {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="author">Autor</Label>
-                  <Input id="author" placeholder="Nome do autor" value={author} onChange={e => setAuthor(e.target.value)} />
+                  <Label htmlFor="author">Autores</Label>
+                  <AuthorInput
+                    initialAuthors={authors}
+                    onChange={(newAuthors) => setAuthors(newAuthors)}
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -565,10 +614,12 @@ const CreateEbook = () => {
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {EBOOK_TEMPLATES.map(template => {
+            const templateIcon = template.id === "classic" ? Type : template.id === "visual" ? Image : template.id === "minimal" ? Minus : BookOpen;
+            const TemplateIcon = templateIcon;
             return <Card key={template.id} className={`p-6 cursor-pointer hover:shadow-card transition-all border-2 ${selectedTemplate === template.id ? "border-primary" : ""}`} onClick={() => setSelectedTemplate(template.id)}>
-                    <div className="aspect-[3/4] bg-gradient-to-br from-muted to-muted/50 rounded-lg mb-4 flex items-center justify-center border-2 border-border relative overflow-hidden">
+                    {true && <div className="aspect-[3/4] bg-gradient-to-br from-muted to-muted/50 rounded-lg mb-4 flex items-center justify-center border-2 border-border relative overflow-hidden">
                         {template.id === "classic" && <div className="absolute inset-0 p-4 flex flex-col gap-2">
                             <div className="h-3 bg-foreground/80 w-3/4 rounded mx-auto"></div>
                             <div className="h-1 bg-foreground/20 w-full rounded"></div>
@@ -601,35 +652,7 @@ const CreateEbook = () => {
                             </div>
                             <div className="w-1/3 bg-primary/20 rounded"></div>
                           </div>}
-                        {template.id === "modern" && <div className="absolute inset-0 p-4 flex flex-col gap-2">
-                            <div className="h-2 bg-gradient-to-r from-primary to-primary/50 w-2/3 rounded"></div>
-                            <div className="h-1 bg-foreground/20 w-full rounded"></div>
-                            <div className="h-1 bg-foreground/20 w-5/6 rounded"></div>
-                            <div className="flex-1 flex items-center justify-center">
-                              <div className="w-20 h-20 bg-gradient-to-br from-primary/30 to-primary/10 rounded-lg"></div>
-                            </div>
-                            <div className="h-1 bg-foreground/20 w-full rounded"></div>
-                          </div>}
-                        {template.id === "bold" && <div className="absolute inset-0 flex flex-col">
-                            <div className="h-1/4 bg-gradient-to-r from-primary to-secondary"></div>
-                            <div className="flex-1 p-4 space-y-2">
-                              <div className="h-4 bg-foreground/80 w-1/2 rounded"></div>
-                              <div className="h-1 bg-foreground/30 w-full rounded"></div>
-                              <div className="h-1 bg-foreground/30 w-4/5 rounded"></div>
-                              <div className="mt-2 w-full h-12 bg-primary/40 rounded"></div>
-                            </div>
-                          </div>}
-                        {template.id === "elegant" && <div className="absolute inset-0 p-3 flex flex-col gap-2 border-4 border-double border-foreground/20 m-2 rounded">
-                            <div className="h-3 bg-foreground/60 w-1/2 rounded mx-auto"></div>
-                            <div className="h-[1px] bg-foreground/30 w-3/4 mx-auto"></div>
-                            <div className="flex-1 space-y-1 pt-2">
-                              <div className="h-1 bg-foreground/20 w-full rounded"></div>
-                              <div className="h-1 bg-foreground/20 w-full rounded"></div>
-                              <div className="h-1 bg-foreground/20 w-4/5 rounded"></div>
-                            </div>
-                            <div className="w-12 h-12 bg-primary/20 rounded mx-auto"></div>
-                          </div>}
-                      </div>
+                      </div>}
                     <h3 className="font-semibold mb-2">{template.name}</h3>
                     <p className="text-sm text-muted-foreground">
                       {template.description}
